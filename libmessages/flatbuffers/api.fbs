@@ -1,0 +1,46 @@
+namespace api;
+
+table IntData{
+data : [int32];
+}
+
+table UintData{
+data : [uint32];
+}
+
+union Keys {IntData, UintData}
+union Values {IntData, UintData}
+
+enum ResultType : byte {
+    Invalid         = 0,
+    Success         = 1,
+    InternalFailure = 2,
+}
+
+table GetRequest{
+length: uint32;
+keys: Keys;
+}
+
+table GetResponse{
+length: uint32;
+values: Values;
+}
+
+table PutRequest{
+length: uint32;
+keys: Keys;
+values: Values;
+}
+
+table PutResponse{
+}
+
+union Payload {PutRequest, PutResponse, GetRequest, GetResponse}
+
+table Message {
+result : ResultType ;
+payload: Payload;
+}
+
+root_type Message;
