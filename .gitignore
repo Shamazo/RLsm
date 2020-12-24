@@ -1,6 +1,7 @@
 # compiled binaries
 target/
 debug/
+*.log
 
 # don't commit flat buffer compiler or the generated code
 libmessages/flatc/*

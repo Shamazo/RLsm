@@ -3,7 +3,7 @@ from client import Client
 
 @pytest.fixture
 def client():
-    c = Client("127.0.0.1", 4243)
+    c = Client("127.0.0.1", 4242    )
     c.connect()
     return c
 

@@ -4,7 +4,7 @@ print("configuring flatbuffers cmake")
 os.chdir("flatbuffers")
 cmake = os.popen('cmake -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release')
 output = cmake.read()
-print(output)
+# print(output)
 
 print("Making flatbuffers")
 make = os.popen("make all")

@@ -58,7 +58,8 @@ mod handle_requests {
             payload : Some(put_request.as_union_value())
         });
 
-        builder.finish(message, None);
+
+        builder.finish_size_prefixed(message, None);
         let send_result = conn.send_message(builder.finished_data());
         if send_result.is_err(){
             println!("Failed to send message: {}", send_result.err().unwrap());
@@ -114,7 +115,7 @@ mod handle_requests {
             payload : Some(get_request.as_union_value())
         });
 
-        builder.finish(message, None);
+        builder.finish_size_prefixed(message, None);
         let send_result = conn.send_message(builder.finished_data());
         if send_result.is_err(){
             println!("Failed to send message: {}", send_result.err().unwrap());
@@ -157,7 +158,7 @@ mod handle_requests {
     }
 
     fn handle_response(buf: Vec<u8>, expected_type: api::Payload) -> Result<(), std::io::Error> {
-        let return_message_result = api::root_as_message(&*buf);
+        let return_message_result = api::size_prefixed_root_as_message(&*buf);
         match return_message_result {
             Ok(message) => {
                 if message.result() == api::ResultType::Success{
@@ -206,7 +207,6 @@ pub struct Connection {
 
 impl Connection{
     fn connect(&mut self, ip_socket: SocketAddrV4){
-        self.is_connected = true;
         if self.is_connected {
             println!("Already connected to server!");
             return;
