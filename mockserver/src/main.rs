@@ -14,7 +14,7 @@ fn main() {
     log_config_builder.set_location_level(LevelFilter::Error);
     CombinedLogger::init(
         vec![
-            TermLogger::new(LevelFilter::Info, log_config_builder.build(), TerminalMode::Mixed).unwrap(),
+            TermLogger::new(LevelFilter::Debug, log_config_builder.build(), TerminalMode::Mixed).unwrap(),
             WriteLogger::new(LevelFilter::Debug, log_config_builder.build(), File::create("mockserver.log").unwrap()),
         ]
     ).unwrap();
@@ -32,7 +32,10 @@ fn main() {
 fn handle_connection(mut stream: TcpStream) {
     let mut prefix_count_buffer :[u8; 4] = [0,0,0,0];
 
-    while stream.read_exact(&mut prefix_count_buffer).unwrap() == () {
+    loop {
+        if stream.read_exact(&mut prefix_count_buffer).is_err(){
+            return;
+        }
         let buffer_length = u32::from_le_bytes(prefix_count_buffer);
 
         debug!("Request length: {}", buffer_length);
