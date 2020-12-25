@@ -14,7 +14,7 @@ fn main() {
     log_config_builder.set_location_level(LevelFilter::Error);
     CombinedLogger::init(
         vec![
-            TermLogger::new(LevelFilter::Debug, log_config_builder.build(), TerminalMode::Mixed).unwrap(),
+            // TermLogger::new(LevelFilter::Debug, log_config_builder.build(), TerminalMode::Mixed).unwrap(),
             WriteLogger::new(LevelFilter::Debug, log_config_builder.build(), File::create("mockserver.log").unwrap()),
         ]
     ).unwrap();

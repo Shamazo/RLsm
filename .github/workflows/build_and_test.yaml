@@ -31,5 +31,9 @@ jobs:
           cd systemtesting
           ../target/debug/mockserver
           pytest
+      - uses: actions/upload-artifact@v2
+        with:
+          name: mock_server_log
+          path: mockserver.log
 
 
