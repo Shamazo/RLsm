@@ -26,7 +26,7 @@ jobs:
         run: python ./build_flatbuffers.py
       - name: Build mockserver
         run: cargo build --bin mockserver
-      - test: python client
+      - name: test python client
         run: |
           cd systemtesting
           ../target/debug/mockserver
