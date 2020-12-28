@@ -4,7 +4,7 @@ name: CI
 
 jobs:
   test_client:
-    name: Rust project
+    name: Test python client
     timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
@@ -26,13 +26,13 @@ jobs:
         run: cargo build --bin mockserver
       - name: test python client
         run: |
+          python -m grpc_tools.protoc -I $GITHUB_WORKSPACE/protos --python_out=$GITHUB_WORKSPACE/systemtesting --grpc_python_out=. $GITHUB_WORKSPACE/protos/kv.proto
+          $GITHUB_WORKSPACE/target/debug/mockserver &
           cd systemtesting
-          python -m grpc_tools.protoc -I ../protos --python_out=. --grpc_python_out=. ../protos/kv.proto
-          ../target/debug/mockserver &
           pytest
       - uses: actions/upload-artifact@v2
         with:
           name: mock_server_log
-          path: mockserver.log
+          path: $GITHUB_WORKSPACE/systemtesting/mockserver.log
 
 
