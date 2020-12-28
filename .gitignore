@@ -18,3 +18,6 @@ venv/
 
 # editor files
 .idea
+# generated python pb files
+/systemtesting/kv_pb2_grpc.py
+/systemtesting/kv_pb2.py

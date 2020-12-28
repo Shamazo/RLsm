@@ -21,15 +21,15 @@ jobs:
       - name: python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pytest flatbuffers
+          pip install pytest grpcio-tools numpy
       - name: build flatbuffers
-        run: python ./build_flatbuffers.py
       - name: Build mockserver
         run: cargo build --bin mockserver
       - name: test python client
         run: |
+          python -m grpc_tools.protoc -I ../protos --python_out=. --grpc_python_out=. ../protos/kv.proto
           cd systemtesting
-          ../target/debug/mockserver
+          ../target/debug/mockserver &
           pytest
       - uses: actions/upload-artifact@v2
         with:
