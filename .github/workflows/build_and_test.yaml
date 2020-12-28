@@ -26,8 +26,8 @@ jobs:
         run: cargo build --bin mockserver
       - name: test python client
         run: |
-          python -m grpc_tools.protoc -I ../protos --python_out=. --grpc_python_out=. ../protos/kv.proto
           cd systemtesting
+          python -m grpc_tools.protoc -I ../protos --python_out=. --grpc_python_out=. ../protos/kv.proto
           ../target/debug/mockserver &
           pytest
       - uses: actions/upload-artifact@v2
