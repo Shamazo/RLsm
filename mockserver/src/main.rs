@@ -1,15 +1,72 @@
-extern crate flatbuffers;
-extern crate simplelog;
-use std::io::{Write, Read};
-use std::net::{TcpStream, TcpListener};
+// import generated rust code
+pub mod pb {
+    tonic::include_proto!("rust_kv");
+}
+
+use pb::{kv_server::KvServer, kv_server::Kv, GetRequest, PutRequest, GetReply, PutReply, StatusCode, key::Key};
+
+use tonic::{transport::Server, Request, Response, Status};
+use tonic;
+use anyhow::{Result, bail, anyhow};
+
+use std::env;
+use simplelog::{ConfigBuilder, WriteLogger, CombinedLogger, LevelFilter};
 use std::fs::File;
+
+extern crate simplelog;
 #[macro_use] extern crate log;
-use simplelog::*;
 
-#[allow(dead_code, unused_imports)]
-use libmessages::api_generated::api;
+#[derive(Default)]
+pub struct RequestHandler {}
 
-fn main() {
+#[tonic::async_trait]
+impl Kv for RequestHandler {
+    async fn get(
+        &self,
+        request: Request<GetRequest>,
+    ) -> Result<Response<GetReply>, Status> {
+        info!("Got a get request from {:?}", request.remote_addr());
+
+        let key = request.into_inner().key;
+        let status_code =  match key {
+            Some(pb::Key{key : Some(Key::IntKey(42))}) => StatusCode::Success as i32,
+            Some(pb::Key{key : Some(Key::UintKey(42))}) => StatusCode::Success as i32,
+            Some(pb::Key{key : Some(Key::IntKey(x))}) => if x == 7 {StatusCode::NoValue as i32} else {StatusCode::InternalError as i32},
+            Some(pb::Key{key : Some(Key::UintKey(x))}) => if x == 7 {StatusCode::NoValue as i32} else {StatusCode::InternalError as i32},
+            Some(pb::Key{key : None}) => return Err(Status::aborted("Malformed request")),
+            None => return Err(Status::invalid_argument("Tried to use an unimplemented key type"))
+        };
+
+        info!("Sending status code {} for key {:?}", status_code, key);
+        let reply = pb::GetReply {
+            status_code: status_code as i32,
+            value: 42_i32.to_le_bytes().to_vec()
+        };
+        Ok(Response::new(reply))
+    }
+
+    async fn put(
+        &self,
+        request: Request<PutRequest>,
+    ) -> Result<Response<PutReply>, Status> {
+        info!("Got a put request from {:?}", request.remote_addr());
+
+        let status_code =  match request.into_inner().key {
+            Some(pb::Key{key : Some(Key::IntKey(x))}) => if x == 42 {StatusCode::Success as i32} else {StatusCode::InternalError as i32},
+            Some(pb::Key{key : Some(Key::UintKey(x))}) => if x == 42 {StatusCode::Success as i32} else {StatusCode::InternalError as i32},
+            Some(pb::Key{key : None}) => return Err(Status::aborted("Malformed request")),
+            None => return Err(Status::invalid_argument("Tried to use an unimplemented key type"))
+        };
+
+        let reply = pb::PutReply {
+            status_code: status_code as i32,
+        };
+        Ok(Response::new(reply))
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut log_config_builder = ConfigBuilder::new();
     log_config_builder.set_location_level(LevelFilter::Error);
     CombinedLogger::init(
@@ -18,84 +75,15 @@ fn main() {
             WriteLogger::new(LevelFilter::Debug, log_config_builder.build(), File::create("mockserver.log").unwrap()),
         ]
     ).unwrap();
+    let addr = "127.0.0.1:4242".parse().unwrap();
+    let request_handler = RequestHandler::default();
 
-    let listener = TcpListener::bind("127.0.0.1:4242").unwrap();
+    println!("RequestHandler listening on {}", addr);
 
-    for stream in listener.incoming() {
-        let stream = stream.unwrap();
-        info!("Connection established!");
-        handle_connection(stream);
+    Server::builder()
+        .add_service(KvServer::new(request_handler))
+        .serve(addr)
+        .await?;
 
-    }
-}
-
-fn handle_connection(mut stream: TcpStream) {
-    let mut prefix_count_buffer :[u8; 4] = [0,0,0,0];
-
-    loop {
-        if stream.read_exact(&mut prefix_count_buffer).is_err(){
-            return;
-        }
-        let buffer_length = u32::from_le_bytes(prefix_count_buffer);
-
-        debug!("Request length: {}", buffer_length);
-        let mut flat_buf = vec![0 as u8; buffer_length as usize];
-        let read_res = stream.read_exact(&mut flat_buf);
-        if read_res.is_err(){
-            error!("Failed to read flatbuffer from socket: {:?}", read_res.err())
-        }
-
-        let request = api::root_as_message(&*flat_buf).unwrap();
-        let mut builder = flatbuffers::FlatBufferBuilder::new_with_capacity(1024);
-
-        match request.payload_type() {
-            api::Payload::PutRequest => {
-                info!("Got PutRequest");
-                // if we put a key with 42 we return a success, else an internal error
-                let key =  request.payload_as_put_request().unwrap().keys_as_int_data().unwrap().data().unwrap().get(0);
-
-                let put_response = api::PutResponse::create(&mut builder, &api::PutResponseArgs{});
-                let message = api::Message::create(&mut builder, &api::MessageArgs{
-                    result: if key == 42 {api::ResultType::Success} else {api::ResultType::InternalFailure},
-                    payload_type: api::Payload::PutResponse,
-                    payload : Some(put_response.as_union_value())
-                });
-                builder.finish_size_prefixed(message, None);
-                let res = stream.write(builder.finished_data());
-                if res.is_err(){
-                    error!("Error sending get response: {:?}", res.err())
-                }
-            }
-
-            api::Payload::GetRequest => {
-                info!("Got GetRequest");
-                let val_data_args = &api::IntDataArgs{
-                    data : Some(builder.create_vector(&[42]))};
-                let key =  request.payload_as_get_request().unwrap().keys_as_int_data().unwrap().data().unwrap().get(0);
-
-                let val_vec = api::IntData::create(&mut builder, val_data_args);
-
-                let get_response = api::GetResponse::create(&mut builder, &api::GetResponseArgs{
-                    length: 1,
-                    values_type: api::Values::IntData,
-                    values: Some(val_vec.as_union_value())
-                });
-                let message = api::Message::create(&mut builder, &api::MessageArgs{
-                    result: if key == 42 {api::ResultType::Success} else {api::ResultType::InternalFailure},
-                    payload_type: api::Payload::GetResponse,
-                    payload : Some(get_response.as_union_value())
-                });
-                builder.finish_size_prefixed(message, None);
-                let res = stream.write(builder.finished_data());
-                if res.is_err(){
-                    error!("Error sending get response: {:?}", res.err())
-                }
-
-            }
-            _ => {unimplemented!("We currently only mock gets and puts!");}
-        }
-
-    }
-
-
+    Ok(())
 }

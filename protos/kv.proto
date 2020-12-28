@@ -1,0 +1,40 @@
+syntax = "proto3";
+package rust_kv;
+
+service kv {
+  rpc Put (PutRequest) returns (PutReply);
+  rpc Get (GetRequest) returns (GetReply);
+}
+
+
+enum StatusCode{
+  Success = 0;
+  InvalidRequest = 1;
+  InternalError = 2;
+  NoValue = 3;
+}
+
+message Key {
+  oneof key {
+    int32 int_key = 1;
+    uint32 uint_key = 2;
+  }
+}
+
+message PutRequest {
+  Key key = 1;
+  bytes value = 2;
+}
+
+message PutReply {
+  StatusCode status_code = 1;
+}
+
+message GetRequest {
+  Key key = 1;
+}
+
+message GetReply {
+  StatusCode status_code = 1;
+  bytes value = 2;
+}
