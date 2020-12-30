@@ -1,5 +1,5 @@
 // mod crate::bloom_filter;
-use bloom_filter::bloom_filter::BloomFilter;
+use bloom_filter::BloomFilter;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 fn bench_insert_normal_prob(c: &mut Criterion) {

@@ -4,7 +4,7 @@ pub mod run {
     use crossbeam_skiplist::SkipMap;
     use serde::{Deserialize, Serialize};
     // use anyhow::Result;
-    use bloom_filter::bloom_filter::BloomFilter;
+    use bloom_filter::BloomFilter;
     use std::mem;
     use thiserror::Error;
     use tokio::io;
