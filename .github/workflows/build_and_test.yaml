@@ -26,10 +26,30 @@ jobs:
         run: cargo build --bin mockserver
       - name: test python client
         run: |
-          python -m grpc_tools.protoc -I $GITHUB_WORKSPACE/protos --python_out=$GITHUB_WORKSPACE/systemtesting --grpc_python_out=. $GITHUB_WORKSPACE/protos/kv.proto
-          $GITHUB_WORKSPACE/target/debug/mockserver &
+          python -m grpc_tools.protoc -I ${{ github.workspace }}/protos --python_out=${{ github.workspace }}/systemtesting --grpc_python_out=. ${{ github.workspace }}/protos/kv.proto
+          ${{ github.workspace }}/target/debug/mockserver &
           cd systemtesting
           pytest
+      - uses: actions/upload-artifact@v2
+        with:
+          name: mock_server_log
+          path: ${{ github.workspace }}/systemtesting/mockserver.log
+
+  unit_tests:
+    name: Rust Unit Tests
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Checkout submodules
+        uses: textbook/git-checkout-submodule-action@master
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - name: Run tests
+        run: cargo test
+      - name: Run Benchmarks
+        run: cargo bench
       - uses: actions/upload-artifact@v2
         with:
           name: mock_server_log

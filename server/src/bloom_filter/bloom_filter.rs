@@ -93,18 +93,6 @@ impl BloomFilter {
             .collect();
     }
 
-    // fn index_iterator<'a, T: Hash>(&self, item: &'a T) -> impl Iterator<Item = usize> + 'a {
-    //     let slice_len = self.slice_len;
-    //     let (k1, k2, k3, k4) = generate_seed(self.seed);
-    //     let mut hasher = SeaHasher::with_seeds(k1, k2, k3, k4);
-    //     (0..self.num_slices).map(move |curr_slice| {
-    //         item.hash(&mut hasher);
-    //         let hash = hasher.finish();
-    //         hasher.write_u64(hash);
-    //         (hash as usize % slice_len) + curr_slice * slice_len
-    //     })
-    // }
-
     pub fn insert<T: Hash>(&mut self, item: &T) {
         for index in self.index_iterator(item) {
             self.bits.set(index, true)
@@ -151,7 +139,7 @@ fn can_insert_bloom_rate() {
 }
 
 #[test]
-fn can_insert_bloom_size_one_hashe() {
+fn can_insert_bloom_size_one_hash() {
     let mut b = BloomFilter::new_with_size(100, 1);
     let item = 20;
     b.insert(&item);
@@ -212,4 +200,27 @@ fn test_refs() {
     let mut b = BloomFilter::new_with_rate(0.01, 100);
     b.insert(&item);
     assert!(b.contains(&item));
+}
+
+#[test]
+fn bloom_filter_can_serialize_deserialize() {
+    let mut b = BloomFilter::new_with_rate(0.01, 1024);
+    let upper = 100;
+    for i in (0..upper).step_by(2) {
+        b.insert(&i);
+        assert_eq!(b.contains(&i), true);
+    }
+    for i in (1..upper).step_by(2) {
+        assert_eq!(b.contains(&i), false);
+    }
+
+    let s = serde_json::to_string(&b).unwrap();
+    let serde_b: BloomFilter = serde_json::from_str(&s).unwrap();
+
+    for i in (0..upper).step_by(2) {
+        assert_eq!(serde_b.contains(&i), true);
+    }
+    for i in (1..upper).step_by(2) {
+        assert_eq!(serde_b.contains(&i), false);
+    }
 }
