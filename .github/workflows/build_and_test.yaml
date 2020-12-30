@@ -26,7 +26,7 @@ jobs:
         run: cargo build --bin mockserver
       - name: test python client
         run: |
-          python -m grpc_tools.protoc -I ${{ github.workspace }}/protos --python_out=${{ github.workspace }}/systemtesting --grpc_python_out=. ${{ github.workspace }}/protos/kv.proto
+          python -m grpc_tools.protoc -I ${{ github.workspace }}/protos --python_out=${{ github.workspace }}/systemtesting --grpc_python_out=${{ github.workspace }}/systemtesting ${{ github.workspace }}/protos/kv.proto
           ${{ github.workspace }}/target/debug/mockserver &
           cd systemtesting
           pytest
