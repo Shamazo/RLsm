@@ -3,9 +3,11 @@ name = "server"
 version = "0.1.0"
 authors = ["shamazo <hmnicholson12@gmail.com>"]
 edition = "2018"
+
 [lib]
-name = "bloom_filter"
-path = "src/bloom_filter/lib.rs"
+name = "rust_kv"
+path = "src/lib.rs"
+
 
 [[bin]]
 name = "server"
@@ -33,8 +35,14 @@ tonic-build = "0.3"
 [dev-dependencies]
 criterion = "0.3"
 serde_json = "1.0"
+rand_chacha = "0.3"
+crossbeam-utils = "*"
 
 
 [[bench]]
 name = "bloom_filter_benches"
+harness = false
+
+[[bench]]
+name = "memory_map_benches"
 harness = false

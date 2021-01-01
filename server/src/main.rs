@@ -1,6 +1,7 @@
-use bloom_filter;
+mod bloom_filter;
 mod fence_pointer;
 mod lsm;
+mod memory_map;
 mod run;
 
 // import generated rust code
@@ -18,10 +19,9 @@ use tonic;
 use tonic::{transport::Server, Request, Response, Status};
 
 use simplelog::{CombinedLogger, ConfigBuilder, LevelFilter, WriteLogger};
-use std::env;
 use std::fs::File;
-use std::sync::Arc;
 
+use crossbeam_skiplist::SkipMap;
 use rayon;
 use std::collections::HashMap;
 
@@ -32,7 +32,7 @@ extern crate simplelog;
 extern crate log;
 
 pub struct RequestHandler {
-    lsm_tree: Arc<lsm::lsm::lsm>,
+    lsm_tree: lsm::Lsm<SkipMap<i32, Vec<u8>>>,
 }
 
 #[tonic::async_trait]
@@ -117,7 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("RequestHandler listening on {}", addr);
 
     // instantiate LSM tree
-    let lsm = Arc::new(lsm::lsm::lsm::new());
+    let lsm = lsm::Lsm::new();
 
     let operator_pool = rayon::ThreadPoolBuilder::new()
         .num_threads(1)

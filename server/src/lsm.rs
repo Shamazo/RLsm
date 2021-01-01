@@ -1,39 +1,33 @@
 use crate::run;
 
-pub mod lsm {
-    use crossbeam_skiplist::SkipMap;
-    use anyhow::Result;
-    use std::sync::atomic::AtomicBool;
+use crate::memory_map::Map;
+// use anyhow::Result;
+use std::sync::atomic::AtomicBool;
 
-    pub struct lsm {
-        primary_memory_map: SkipMap<i32, Vec<u8>>,
-        secondary_memory_map: SkipMap<i32, Vec<u8>>,
-        use_primary_map: AtomicBool,
+pub struct Lsm<T: Map<i32> + IntoIterator> {
+    #[allow(dead_code)]
+    mutable_memory_map: T,
+    #[allow(dead_code)]
+    immutable_memory_map: T,
+    #[allow(dead_code)]
+    use_primary_map: AtomicBool,
+}
+
+impl<T: Map<i32> + IntoIterator> Lsm<T> {
+    pub fn new() -> Lsm<T> {
+        return Lsm {
+            mutable_memory_map: T::new(),
+            immutable_memory_map: T::new(),
+            use_primary_map: Default::default(),
+        };
     }
-
-    impl lsm {
-        pub fn new() -> lsm {
-            return lsm{
-                primary_memory_map: SkipMap::new(),
-                secondary_memory_map: SkipMap::new(),
-                use_primary_map: AtomicBool::new(true)
-            }
-        }
-
-        pub fn get(self: &Self, key: i32) -> Option<Vec<u8>> {
-            let res = self.primary_memory_map.get(&key);
-            return if res.is_none() {
-                None
-            } else {
-                Some(res.unwrap().value().to_vec())
-            }
-
-        }
-
-        pub fn set(self: &Self, key: i32, val: Vec<u8>) -> anyhow::Result<()> {
-            self.primary_memory_map.insert(key, val);
-            return Ok(());
-        }
+    #[allow(dead_code)]
+    pub fn get(self: &Self, key: i32) -> Option<Vec<u8>> {
+        return self.mutable_memory_map.get(key);
     }
-
+    #[allow(dead_code)]
+    pub fn set(self: &Self, key: i32, val: Vec<u8>) -> anyhow::Result<()> {
+        self.mutable_memory_map.put(key, val);
+        return Ok(());
+    }
 }
