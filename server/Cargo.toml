@@ -1,14 +1,10 @@
 [package]
 name = "server"
 version = "0.1.0"
-authors = ["shamazo <hmnicholson12@gmail.com>"]
+authors = ["hamish <hmnicholson12@gmail.com>"]
 edition = "2018"
 
-[lib]
-name = "rust_kv"
-path = "src/lib.rs"
-
-
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [[bin]]
 name = "server"
 path = "src/main.rs"
@@ -18,31 +14,9 @@ simplelog = "^0.7.6"
 log = "0.4"
 tonic = "0.3"
 prost = "0.6"
-tokio = { version = "0.2", features = ["macros"] }
+tokio = { version = "1.0.1", features = ["full"] }
 anyhow = "1.0"
 thiserror = "1.0"
 rayon = "*"
-crossbeam-skiplist = { git = "https://github.com/crossbeam-rs/crossbeam.git", branch = "master" }
 config = "0.10"
-serde = { version = "1.0", features = ["derive"]}
-bit-vec = { version = "0.6", features = ["serde"] }
-rand = "0.8"
-seahash = "4.0.1"
 
-[build-dependencies]
-tonic-build = "0.3"
-
-[dev-dependencies]
-criterion = "0.3"
-serde_json = "1.0"
-rand_chacha = "0.3"
-crossbeam-utils = "*"
-
-
-[[bench]]
-name = "bloom_filter_benches"
-harness = false
-
-[[bench]]
-name = "memory_map_benches"
-harness = false

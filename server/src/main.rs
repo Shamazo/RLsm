@@ -1,8 +1,4 @@
-mod bloom_filter;
-mod fence_pointer;
-mod lsm;
-mod memory_map;
-mod run;
+// TODO use rust store crate and have this compile.
 
 // import generated rust code
 pub mod pb {
@@ -21,9 +17,7 @@ use tonic::{transport::Server, Request, Response, Status};
 use simplelog::{CombinedLogger, ConfigBuilder, LevelFilter, WriteLogger};
 use std::fs::File;
 
-use crossbeam_skiplist::SkipMap;
 use rayon;
-use std::collections::HashMap;
 
 extern crate config;
 

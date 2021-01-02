@@ -15,7 +15,7 @@ pub trait Map<K: Ord + Send + 'static> {
     fn new() -> Self;
 
     fn put(&self, key: K, value: Vec<u8>) -> Result<(), MemoryMapError>;
-    fn get(&self, key: K) -> Option<Vec<u8>>;
+    fn get(&self, key: &K) -> Option<Vec<u8>>;
     // fn range(&self, range: RangeBounds<i32>) -> Self::RangeType;
     fn len(&self) -> usize;
 }
@@ -30,8 +30,8 @@ impl<K: Ord + Send + 'static> Map<K> for SkipMap<K, Vec<u8>> {
         return Ok(());
     }
 
-    fn get(&self, key: K) -> Option<Vec<u8>> {
-        let res = self.get(&key);
+    fn get(&self, key: &K) -> Option<Vec<u8>> {
+        let res = self.get(key);
         if res.is_none() {
             return None;
         } else {
