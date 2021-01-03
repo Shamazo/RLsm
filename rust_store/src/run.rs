@@ -362,16 +362,15 @@ mod test_run {
     use crossbeam_skiplist::SkipMap;
     use log::info;
     use std::thread::sleep;
+    use tempfile::tempdir;
     use test_env_log::test;
     use tokio::time::Duration;
-    // TODO a better temporary file solution.
 
     #[test]
     fn small_run_from_memory_map() {
-        // env_logger::init();
-        sleep(Duration::new(0, 2000000));
         let mut config = Config::default();
-        config.set_directory("/tmp");
+        let dir = tempdir().unwrap();
+        config.set_directory(dir.path());
         info!("Running small_run_from_memory_map");
         let map = SkipMap::new();
         for i in 0..500 {
@@ -387,7 +386,8 @@ mod test_run {
         // env_logger::init();
         sleep(Duration::new(0, 2000000));
         let mut config = Config::default();
-        config.set_directory("/tmp");
+        let dir = tempdir().unwrap();
+        config.set_directory(dir.path());
         info!("Running small_run_from_memory_map");
         let map = SkipMap::new();
         for i in 0..500 {
@@ -407,7 +407,8 @@ mod test_run {
         // env_logger::init();
         info!("Running small_run_get");
         let mut config = Config::default();
-        config.set_directory("/tmp");
+        let dir = tempdir().unwrap();
+        config.set_directory(dir.path());
         let map = SkipMap::new();
         for i in 0..500 {
             map.insert(i, vec![0u8, 20u8, 3u8]);
@@ -422,7 +423,8 @@ mod test_run {
     fn larger_run_from_memory_map() {
         info!("Running larger_run_from_memory_map");
         let mut config = Config::default();
-        config.set_directory("/tmp");
+        let dir = tempdir().unwrap();
+        config.set_directory(dir.path());
         let map = SkipMap::new();
         for i in 0..50000 {
             map.insert(i, vec![0u8, 20u8, 3u8]);
@@ -440,33 +442,4 @@ mod test_run {
         assert_eq!(val.unwrap(), vec![0u8, 20u8, 3u8]);
         run.delete().unwrap();
     }
-
-    // #[test]
-    // fn fp_u64() {
-    //     let lower: u64 = 1;
-    //     let upper: u64 = 5;
-    //     let fp = FencePointer::new(lower, upper);
-    //     assert!(fp.in_range(&2));
-    //     assert!(fp.in_range(&1));
-    //     assert!(fp.in_range(&5));
-    //     assert!(!fp.in_range(&7));
-    // }
-    //
-    // #[test]
-    // fn fp_can_serialize_deserialize() {
-    //     let lower: u64 = 1;
-    //     let upper: u64 = 5;
-    //     let fp = FencePointer::new(lower, upper);
-    //     assert!(fp.in_range(&2));
-    //     assert!(fp.in_range(&1));
-    //     assert!(fp.in_range(&5));
-    //     assert!(!fp.in_range(&7));
-    //
-    //     let s = serde_json::to_string(&fp).unwrap();
-    //     let serde_fp: FencePointer<u64> = serde_json::from_str(&s).unwrap();
-    //     assert!(serde_fp.in_range(&2));
-    //     assert!(serde_fp.in_range(&1));
-    //     assert!(serde_fp.in_range(&5));
-    //     assert!(!serde_fp.in_range(&7));
-    // }
 }

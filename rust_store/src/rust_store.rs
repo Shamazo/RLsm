@@ -68,8 +68,8 @@ impl Config {
     ///
     /// * `dir` - A string containing the path to the directory where rust_store will store data
     ///             e.g /home/steve/data
-    pub fn set_directory(self: &mut Self, dir: &str) {
-        self.directory = Some(dir.parse().unwrap());
+    pub fn set_directory(self: &mut Self, dir: &Path) {
+        self.directory = Some(PathBuf::from(dir));
     }
 
     /// Sets the memory budget for the in memory store
