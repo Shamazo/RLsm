@@ -103,12 +103,13 @@ impl<T: 'static + Map<i32> + IntoIterator + Send + Sync> Lsm<T> {
             }
         }
 
-        // for i in 0..self.levels.len(){
-        //     let level = self.levels[i].read();
-        //     let maybe_res = level.get(key)?;
-        //     if maybe_res.
-        //
-        // }
+        for i in 0..self.levels.len() {
+            let level = self.levels[i].read();
+            let maybe_res = level.get_from_level(key);
+            if maybe_res.is_some() {
+                return maybe_res;
+            }
+        }
         return None;
     }
     #[allow(dead_code)]

@@ -16,6 +16,8 @@ pub enum RustStoreError {
     RunError(#[from] run::RunError),
     #[error("Error in the LSM")]
     LsmError(#[from] LsmError),
+    #[error("Invalid option")]
+    OptionParsingError(),
     #[error("Not yet implemented")]
     NotImplemented,
 }
@@ -24,6 +26,7 @@ pub struct RustStore {
     lsm: Arc<Lsm<SkipMap<i32, Vec<u8>>>>,
 }
 
+/// The options struct for rust_store.
 #[derive(Serialize, Deserialize)]
 pub struct Config {
     /// Max size in bytes for the in memory map
@@ -40,6 +43,15 @@ pub struct Config {
 }
 
 impl Config {
+    /// # Arguments
+    ///
+    /// * `name` - A string slice that holds the name of the person
+    ///
+    /// # Examples
+    /// ```
+    /// use rust_kv::Config;
+    /// let config = Config::default();
+    /// ```
     pub fn default() -> Config {
         return Config {
             memory_map_budget: 100 * MB,
@@ -49,6 +61,37 @@ impl Config {
             Z: 10,
             directory: None,
         };
+    }
+    /// Sets the directory for data
+    ///
+    /// # Arguments
+    ///
+    /// * `dir` - A string containing the path to the directory where rust_store will store data
+    ///             e.g /home/steve/data
+    pub fn set_directory(self: &mut Self, dir: &str) {
+        self.directory = Some(dir.parse().unwrap());
+    }
+
+    /// Sets the memory budget for the in memory store
+    /// # Arguments
+    ///
+    /// * `budget` - The maximum number of bytes to be used by the in memory store.
+    ///              Currently this is not a hard limit, but a threshold which will trigger the creation
+    ///              of a new run. If there is a high write rate then the budget may be exceeded while
+    ///              creating the new run.
+    pub fn set_memory_map_budget(self: &mut Self, budget: usize) {
+        self.memory_map_budget = budget;
+    }
+
+    /// Sets the memory budget for the in memory store
+    /// # Arguments
+    ///
+    /// * `budget` - The maximum number of bytes to be used by bloom filters in each run.
+    ///              Bloom filters are used for each run during reads to check if a value exists
+    ///              to avoid costly IO if it does not. A larger budget will reduce the number
+    ///              of false positives during get operations
+    pub fn set_bloom_filter_budget(self: &mut Self, budget: usize) {
+        self.bloom_filter_budget = budget;
     }
 }
 
