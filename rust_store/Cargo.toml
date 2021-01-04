@@ -39,12 +39,17 @@ crossbeam-utils = "*"
 test-env-log = "0.2"
 env_logger = "*"
 tempfile = "3"
+test-case = "1"
 
+
+#[[bench]]
+#name = "bloom_filter_benches"
+#harness = false
+#
+#[[bench]]
+#name = "memory_map_benches"
+#harness = false
 
 [[bench]]
-name = "bloom_filter_benches"
-harness = false
-
-[[bench]]
-name = "memory_map_benches"
+name = "run_benches"
 harness = false

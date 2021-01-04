@@ -87,6 +87,7 @@ pub struct Run<K: Ord> {
     bloom_filter: BloomFilter,
     fence_pointers: Vec<FencePointer<K>>,
     pub file_name: PathBuf,
+    block_size: u64,
 }
 
 impl<K: Ord + Serialize + DeserializeOwned + Copy + Hash + Debug> Run<K> {
@@ -143,13 +144,14 @@ impl<K: Ord + Serialize + DeserializeOwned + Copy + Hash + Debug> Run<K> {
         for x in memory_map {
             encoder.flush()?;
             idx = encoder.total_out();
+            // would prefer to move the value as we consume the memorymap, but to benchmark it I need to pass a reference.
             let item = Item::new(x.0, x.1);
             filter.insert(&item.key);
             // we use ser_length because I don't know how to get compressed length
             let ser_length = bincode_opts.serialized_size(&item)?;
             // finish out the page
-            if (idx + ser_length >= 4092) {
-                // finish out the encoder for each page so each page can be indendently decoded.
+            if (idx + ser_length >= config.block_size - 20) {
+                // finish out the encoder for each page so each page can be independently decoded.
                 let mut writer = encoder.finish()?;
                 // The wirter writes the bytes 0x3 and 0x0 to mark the end of the stream
                 idx += 2;
@@ -159,7 +161,7 @@ impl<K: Ord + Serialize + DeserializeOwned + Copy + Hash + Debug> Run<K> {
                 }
 
                 // pad out the rest of the page
-                let zeros = vec![4u8; (4096 - idx) as usize];
+                let zeros = vec![4u8; (config.block_size - idx) as usize];
                 let padding_byte_len = writer.write(&zeros)? as u64;
 
                 debug!(
@@ -190,7 +192,8 @@ impl<K: Ord + Serialize + DeserializeOwned + Copy + Hash + Debug> Run<K> {
                 bincode_opts.serialize_into(&mut encoder, &item)?;
                 max_val = item.key;
             }
-            if !(idx < 4096) {
+ 
+            if !(idx < config.block_size as u64) {
                 error!(
                     "idx too big! idx: {}, prev_enc_out: {} encoder total: {} ",
                     idx,
@@ -205,7 +208,7 @@ impl<K: Ord + Serialize + DeserializeOwned + Copy + Hash + Debug> Run<K> {
         // finish the page
         let mut writer = encoder.finish()?;
         idx += 2;
-        let zeros = vec![0u8; (4096 - idx) as usize];
+        let zeros = vec![4u8; (config.block_size - idx) as usize];
         let padding_byte_len = writer.write(&zeros)? as u64;
         debug!(
             "Writing page with {} bytes with {} bytes of padding. with min {:?} max {:?}",
@@ -215,7 +218,7 @@ impl<K: Ord + Serialize + DeserializeOwned + Copy + Hash + Debug> Run<K> {
             max_val
         );
         idx = idx + padding_byte_len;
-        debug_assert!(idx == 4096);
+        debug_assert!(idx == config.block_size as u64);
         fence_pointers.push(FencePointer::new(min_val, max_val));
 
         // The metadata struct is not compressed
@@ -234,6 +237,7 @@ impl<K: Ord + Serialize + DeserializeOwned + Copy + Hash + Debug> Run<K> {
             bloom_filter: filter,
             fence_pointers: fence_pointers,
             file_name: path.clone(),
+            block_size: config.block_size,
         };
 
         let ser_meta = bincode::serialize(&run)?;
@@ -294,11 +298,11 @@ impl<K: Ord + Serialize + DeserializeOwned + Copy + Hash + Debug> Run<K> {
         // };
     }
 
-    fn get_from_page(self: &Self, page: usize, key: &K) -> Result<Option<Vec<u8>>, RunError> {
+    fn get_from_page(self: &Self, page: u64, key: &K) -> Result<Option<Vec<u8>>, RunError> {
         debug!("get_from_page: opening file {:?}", &self.file_name);
         let mut f = File::open(&self.file_name)?;
-        let _ = f.seek(SeekFrom::Start((page * 4096) as u64))?;
-        let mut page_buf = vec![0u8; 4096];
+        let _ = f.seek(SeekFrom::Start(page * self.block_size))?;
+        let mut page_buf = vec![0u8; self.block_size as usize];
         let _ = f.read_exact(&mut page_buf)?;
 
         let bincode_opts = bincode::DefaultOptions::new();
@@ -314,29 +318,19 @@ impl<K: Ord + Serialize + DeserializeOwned + Copy + Hash + Debug> Run<K> {
         );
         let mut decompressed_cursor = Cursor::new(decompressed);
 
-        // let mut decompress_bytes = decompressed.as_bytes();
-        // let mut idx: u64 = 0;
         loop {
             // let item_length: u64 = bincode_opts.deserialize(&mut decompress_bytes)?;
             let item: Item<K> = bincode_opts.deserialize_from(&mut decompressed_cursor)?;
             if item.key == *key {
                 return Ok(Some(item.value));
             }
-            // do I need to know the length of the bytes I am deserializing.
-            // deser_item = bincode::deserialize(&page_buf)?;
         }
 
-        // let meta_size = f.read_u64().await?;
-        //
-        // let mut meta_buf = Box::new(vec![0u8; meta_size as usize]);
-        // f.read_exact(&mut **meta_buf);
-        // let mut deserializer = Deserializer::from_slice(&meta_buf);
-        // let run = serde::de::Deserialize::deserialize(&mut deserializer)?;
         return Ok(None);
     }
 
     /// Given a key, find which page the value is on
-    fn get_page_index(self: &Self, key: &K) -> Option<usize> {
+    fn get_page_index(self: &Self, key: &K) -> Option<u64> {
         let mut idx = 0;
         for fp in &self.fence_pointers {
             if fp.in_range(key) {
@@ -361,13 +355,18 @@ mod test_run {
     use crate::Config;
     use crossbeam_skiplist::SkipMap;
     use log::info;
+    use rand::Rng;
+    use rand_chacha::rand_core::SeedableRng;
+    use rand_chacha::ChaChaRng;
     use std::thread::sleep;
     use tempfile::tempdir;
-    use test_env_log::test;
+    use test_case::test_case;
+    // use test_env_log::test;
     use tokio::time::Duration;
 
     #[test]
     fn small_run_from_memory_map() {
+        // env_logger::init();
         let mut config = Config::default();
         let dir = tempdir().unwrap();
         config.set_directory(dir.path());
@@ -397,13 +396,12 @@ mod test_run {
         let page_index = run.get_page_index(&0).unwrap();
         assert_eq!(page_index, 0);
         let page_index_last = run.get_page_index(&499).unwrap();
-        assert_eq!(page_index_last, run.fence_pointers.len() - 1);
+        assert_eq!(page_index_last as usize, run.fence_pointers.len() - 1);
         run.delete().unwrap();
     }
 
     #[test]
     fn small_run_get() {
-        sleep(Duration::new(0, 2000000));
         // env_logger::init();
         info!("Running small_run_get");
         let mut config = Config::default();
@@ -419,27 +417,50 @@ mod test_run {
         run.delete().unwrap();
     }
 
-    #[test]
-    fn larger_run_from_memory_map() {
-        info!("Running larger_run_from_memory_map");
+    #[test_case( 512 ; "0.125 KB")]
+    #[test_case(1024 ; "0.25 KB")]
+    #[test_case(2048 ; "0.5 KB")]
+    #[test_case(4096 ; "1 KB")]
+    #[test_case(8192 ; "2 KB")]
+    #[test_case(16384 ; "4 KB")]
+    #[test_case(32768 ; "8 KB")]
+    #[test_case(65536 ; "16 KB")]
+    #[test_case(131072 ; "32 KB")]
+    fn construct_1MB_run_varying_block_size(page_size: u64) {
+        // env_logger::init();
+        info!("Running construct_large_run_random_vals");
         let mut config = Config::default();
         let dir = tempdir().unwrap();
         config.set_directory(dir.path());
-        let map = SkipMap::new();
-        for i in 0..50000 {
-            map.insert(i, vec![0u8, 20u8, 3u8]);
-        }
+        let map = create_skipmap(4 * 1024 * 1024);
         let run = Run::new(map, &config).unwrap();
-        let page_index = run.get_page_index(&0).unwrap();
-        assert_eq!(page_index, 0);
-        let page_index_last = run.get_page_index(&(50000 - 1)).unwrap();
-        assert_eq!(page_index_last, run.fence_pointers.len() - 1);
-        let val = run.get_from_run(&1000);
-        assert_eq!(val.unwrap(), vec![0u8, 20u8, 3u8]);
-        let val = run.get_from_run(&40000);
-        assert_eq!(val.unwrap(), vec![0u8, 20u8, 3u8]);
-        let val = run.get_from_run(&23000);
-        assert_eq!(val.unwrap(), vec![0u8, 20u8, 3u8]);
+
         run.delete().unwrap();
+    }
+
+    // generates a random number of random bytes
+    fn gen_rand_bytes<T: Rng>(mut rng: &mut T) -> Vec<u8> {
+        let num_bytes = rng.gen_range(1..256);
+        let mut ret_vec = vec![0u8; num_bytes];
+        rng.fill_bytes(&mut ret_vec);
+        return ret_vec;
+    }
+
+    // Size in bytes approx
+    fn create_skipmap(size: u64) -> SkipMap<i32, Vec<u8>> {
+        let mut curr_size: u64 = 0;
+        let map = SkipMap::new();
+        let seed = [42; 32];
+        let mut rng = ChaChaRng::from_seed(seed);
+
+        while curr_size < size {
+            let rand_key: i32 = rng.gen_range(-50000..50000);
+            let rand_val = gen_rand_bytes(&mut rng);
+            curr_size += 4 + rand_val.len() as u64;
+            map.insert(rand_key, rand_val);
+        }
+        println!("Curr size {}", curr_size);
+
+        return map;
     }
 }

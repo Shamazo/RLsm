@@ -14,7 +14,7 @@ struct params {
 
 fn insert_one_thread<T: Map<i32>>(params: Vec<params>, m: &T) -> u64 {
     for i in 0..params.len() {
-        m.put(params[i].key, params[i].value.clone());
+        m.put(params[i].key, params[i].value.clone()).unwrap();
     }
     return 0;
 }
@@ -53,7 +53,7 @@ fn bench_skiplist_insert_100000_one_thread(c: &mut Criterion) {
     let vals = vec![one_val; num_items as usize];
 
     let mut params = vec![];
-    for i in (0..num_items as usize) {
+    for i in 0..num_items as usize {
         params.push(params {
             key: keys[i],
             value: vals[i].clone(),
@@ -70,7 +70,7 @@ fn insert_n_threads_k_values(n: usize, param_vecs: Vec<Vec<params>>) {
         for param_vec in param_vecs.into_iter() {
             s.spawn(|s| {
                 for param in param_vec {
-                    m.put(param.key, param.value.clone());
+                    m.put(param.key, param.value.clone()).unwrap();
                 }
             });
         }
@@ -95,7 +95,7 @@ fn bench_skiplist_insert_100000_n_threads(c: &mut Criterion) {
 
                 let one_val: Vec<u8> = (0..8).collect();
                 let mut params = vec![];
-                for i in (0..keys.len() as usize) {
+                for i in 0..keys.len() as usize {
                     params.push(params {
                         key: keys[i],
                         value: one_val.clone(),
