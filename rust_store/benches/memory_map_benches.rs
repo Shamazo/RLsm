@@ -3,7 +3,6 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 use crossbeam_skiplist::SkipMap;
 use rand::{seq::SliceRandom, SeedableRng}; // 0.6.5
 use rand_chacha::ChaChaRng;
-use rust_kv::memory_map::Map;
 use std::time::Duration;
 
 #[derive(Clone, Debug)]
@@ -12,16 +11,16 @@ struct params {
     value: Vec<u8>,
 }
 
-fn insert_one_thread<T: Map<i32>>(params: Vec<params>, m: &T) -> u64 {
+fn insert_one_thread(params: Vec<params>, m: Arc<SkipMap<i32, Vec<u8>>>) -> u64 {
     for i in 0..params.len() {
-        m.put(params[i].key, params[i].value.clone()).unwrap();
+        m.insert(params[i].key, params[i].value.clone());
     }
     return 0;
 }
 
 fn bench_skiplist_insert_10000_one_thread(c: &mut Criterion) {
     // we shuffle the keys, but with a fixed RNG/shuffle to have less variability
-    let mmap: SkipMap<i32, Vec<u8>> = SkipMap::new();
+    let mmap: Arc<SkipMap<i32, Vec<u8>>> = Arc::new(SkipMap::new());
     let num_items: i32 = 10000;
     let mut keys: Vec<i32> = (0..num_items).collect();
     let seed = [42; 32];
@@ -38,12 +37,12 @@ fn bench_skiplist_insert_10000_one_thread(c: &mut Criterion) {
         })
     }
     c.bench_function("skiplist 10,000 insert one thread", |b| {
-        b.iter(|| insert_one_thread(params.clone(), &mmap))
+        b.iter(|| insert_one_thread(params.clone(), mmap.clone()))
     });
 }
 
 fn bench_skiplist_insert_100000_one_thread(c: &mut Criterion) {
-    let mmap: SkipMap<i32, Vec<u8>> = SkipMap::new();
+    let mmap: Arc<SkipMap<i32, Vec<u8>>> = Arc::new(SkipMap::new());
     let num_items: i32 = 100000;
     let mut keys: Vec<i32> = (0..num_items).collect();
     let seed = [42; 32];
@@ -60,17 +59,19 @@ fn bench_skiplist_insert_100000_one_thread(c: &mut Criterion) {
         })
     }
     c.bench_function("skiplist 100,000 insert one thread", |b| {
-        b.iter(|| insert_one_thread(params.clone(), &mmap))
+        b.iter(|| insert_one_thread(params.clone(), mmap.clone()))
     });
 }
 use crossbeam_utils::thread::scope;
+use std::sync::Arc;
+
 fn insert_n_threads_k_values(n: usize, param_vecs: Vec<Vec<params>>) {
     let m: SkipMap<i32, Vec<u8>> = SkipMap::new();
     scope(|s| {
         for param_vec in param_vecs.into_iter() {
             s.spawn(|s| {
                 for param in param_vec {
-                    m.put(param.key, param.value.clone()).unwrap();
+                    m.insert(param.key, param.value.clone());
                 }
             });
         }

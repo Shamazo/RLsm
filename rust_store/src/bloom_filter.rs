@@ -3,6 +3,7 @@ extern crate core;
 extern crate rand;
 
 use bit_vec::BitVec;
+use log::info;
 use rand::Rng;
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
@@ -46,6 +47,7 @@ impl BloomFilter {
     /// * `num_hashes` - The number of hash functions to use
     /// * `seed` - An optional pseudo random seed used for the hash functions
     pub fn new_with_size(num_bits: usize, num_hashes: usize) -> BloomFilter {
+        info!("new_with_size: Creating new bloom filter");
         debug_assert!(num_bits >= 1);
         debug_assert!(num_hashes >= 1);
         let mut field = BitVec::with_capacity(num_bits);
@@ -167,7 +169,7 @@ fn can_clear_bloom() {
 
 #[test]
 fn does_not_contain() {
-    let mut b = BloomFilter::new_with_rate(0.01, 100);
+    let mut b = BloomFilter::new_with_rate(0.0001, 100);
     let upper = 100;
     for i in (0..upper).step_by(2) {
         b.insert(&i);

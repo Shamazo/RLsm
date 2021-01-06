@@ -1,5 +1,4 @@
 use crate::lsm::{Lsm, LsmError};
-use crate::memory_map;
 use crate::run;
 use crossbeam_skiplist::SkipMap;
 use serde::{Deserialize, Serialize};
@@ -23,7 +22,12 @@ pub enum RustStoreError {
 }
 
 pub struct RustStore {
-    lsm: Arc<Lsm<SkipMap<i32, Vec<u8>>>>,
+    lsm: Arc<Lsm>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub enum MemoryMapType {
+    IntSkipList,
 }
 
 //TODO make these fields private and also accessible from the rest of the crate.

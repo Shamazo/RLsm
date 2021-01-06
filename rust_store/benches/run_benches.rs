@@ -4,25 +4,13 @@ use criterion::{black_box, criterion_group, criterion_main, BatchSize, Benchmark
 use crossbeam_skiplist::SkipMap;
 use rand::{seq::SliceRandom, Rng, SeedableRng}; // 0.6.5
 use rand_chacha::ChaChaRng;
-use rust_kv::memory_map::Map;
 use rust_kv::run::Run;
 use rust_kv::Config;
+use std::sync::Arc;
 use std::time::Duration;
 
 const KB: u64 = 1024;
 const MB: u64 = KB * 1024;
-
-// #[derive(Clone, Debug)]
-// struct params {
-//     skipmap: SkipMap<i32, Vec<u8>>,
-// }
-
-// fn insert_one_thread<T: Map<i32>>(params: Vec<params>, m: &T) -> u64 {
-//     for i in 0..params.len() {
-//         m.put(params[i].key, params[i].value.clone());
-//     }
-//     return 0;
-// }
 
 // generates a random number of random bytes
 fn gen_rand_bytes<T: Rng>(mut rng: &mut T) -> Vec<u8> {
@@ -33,9 +21,9 @@ fn gen_rand_bytes<T: Rng>(mut rng: &mut T) -> Vec<u8> {
 }
 
 // Size in bytes approx
-fn create_skipmap(size: u64) -> SkipMap<i32, Vec<u8>> {
+fn create_skipmap(size: u64) -> Arc<SkipMap<i32, Vec<u8>>> {
     let mut curr_size: u64 = 0;
-    let map = SkipMap::new();
+    let map = Arc::new(SkipMap::new());
     let seed = [42; 32];
     let mut rng = ChaChaRng::from_seed(seed);
 
@@ -62,7 +50,7 @@ fn run_create_from_skiplist(c: &mut Criterion) {
 
             b.iter_batched(
                 || create_skipmap(n * MB as u64),
-                |skipmap| Run::new(skipmap, &config),
+                |skipmap| Run::new_from_skipmap(skipmap, &config),
                 BatchSize::PerIteration,
             );
         });
@@ -84,7 +72,7 @@ fn run_create_from_32MB_skiplist_by_block_size(c: &mut Criterion) {
 
             b.iter_batched(
                 || create_skipmap(32 * MB as u64),
-                |skipmap| Run::new(skipmap, &config),
+                |skipmap| Run::new_from_skipmap(skipmap, &config),
                 BatchSize::PerIteration,
             );
         });
