@@ -265,7 +265,7 @@ mod test_run {
 
     #[test]
     fn lsm_small_ten_disk_run10() {
-        env_logger::init();
+        // env_logger::init();
         info!("Running small_lsm");
         let mut config = Config::default();
         let dir = tempdir().unwrap();

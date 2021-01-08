@@ -1,6 +1,6 @@
 use crate::lsm::{Lsm, LsmError};
 use crate::run;
-use crossbeam_skiplist::SkipMap;
+use crate::run::RunError;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -12,7 +12,7 @@ const MB: u64 = KB * 1024;
 #[derive(Error, Debug)]
 pub enum RustStoreError {
     #[error("Error in a run")]
-    RunError(#[from] run::RunError),
+    RunError(#[from] RunError),
     #[error("Error in the LSM")]
     LsmError(#[from] LsmError),
     #[error("Invalid option: '{0}'")]
@@ -39,11 +39,11 @@ pub struct Config {
     /// Max size in bytes for the in memory bloom filters
     pub bloom_filter_budget: u64,
     /// Size ratio between levels
-    pub T: u64,
+    pub t: u64,
     /// Maximum number of runs in each level other than the largest
-    pub K: u64,
+    pub k: u64,
     /// Max number of runs at the largest level.
-    pub Z: u64,
+    pub z: u64,
     /// Directory for RustStore to use
     pub directory: Option<PathBuf>,
     /// Block size for runs.
@@ -52,8 +52,6 @@ pub struct Config {
 
 impl Config {
     /// # Arguments
-    ///
-    /// * `name` - A string slice that holds the name of the person
     ///
     /// # Examples
     /// ```
@@ -64,9 +62,9 @@ impl Config {
         return Config {
             memory_map_budget: 100 * MB,
             bloom_filter_budget: 10 * MB,
-            T: 10,
-            K: 10,
-            Z: 10,
+            t: 10,
+            k: 10,
+            z: 10,
             directory: None,
             block_size: 4 * KB,
         };
@@ -75,7 +73,7 @@ impl Config {
     ///
     /// # Arguments
     ///
-    /// * `dir` - A string containing the path to the directory where rust_store will store data
+    /// * `dir` - A Path to the directory where rust_store will store data
     ///             e.g /home/steve/data
     pub fn set_directory(self: &mut Self, dir: &Path) {
         //TODO maybe check path exists?
@@ -115,7 +113,7 @@ impl Config {
     /// Blocks are the atomic IO unit of runs. Each block has associated fencepointers so when we
     /// need to get a value from a run we can identify which block contains it. Blocks are also
     /// compressed individually. A higher block size should reduce the same it takes to construct a run,
-    /// but may slow read / lookup times.
+    /// but may slow point read / lookup times.
     pub fn set_block_size(self: &mut Self, size: u64) -> Result<(), RustStoreError> {
         if size == 0 {
             return Err(RustStoreError::OptionParsingError(
@@ -128,20 +126,62 @@ impl Config {
 }
 
 impl RustStore {
+    /// Instantiate a new RustStore database.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - An optional RustStore::Config struct. If None is passed
+    ///              the default config is used.
     pub fn new(config: Option<Config>) -> RustStore {
         return RustStore {
             lsm: Lsm::new(config),
         };
     }
 
-    #[allow(dead_code)]
+    /// Get a value from the database
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - key to look up a value for.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // You can have rust code between fences inside the comments
+    /// // If you pass --test to `rustdoc`, it will even test it for you!
+    /// use rust_kv::{Config, new, get};
+    /// let config = Config::default();
+    ///
+    /// let db = new(config);
+    /// let key = 42;
+    /// let val = db.get(&42);
+    /// ```
     pub fn get(self: &Self, key: &i32) -> Option<Vec<u8>> {
         return self.lsm.get(key);
     }
 
-    #[allow(dead_code)]
-    pub fn put(self: &Self, key: i32, val: Vec<u8>) -> Result<(), RustStoreError> {
-        let res = self.lsm.put(key, val)?;
+    /// Put a key value pair into the database
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - key associated with val
+    /// * `value` - key associated with val
+    /// # Examples
+    ///
+    /// ```
+    /// // You can have rust code between fences inside the comments
+    /// // If you pass --test to `rustdoc`, it will even test it for you!
+    /// use rust_kv::{Config, new, get};
+    /// let config = Config::default();
+    ///
+    /// let db = new(config);
+    /// let key = 42;
+    /// let put_val = vec![43_u8, 44_u8];
+    /// let get_val = db.get(&42);
+    /// // get_val == put_val
+    /// ```
+    pub fn put(self: &Self, key: i32, value: Vec<u8>) -> Result<(), RustStoreError> {
+        let res = self.lsm.put(key, value)?;
         return Ok(res);
     }
 }

@@ -1,6 +1,6 @@
 // use crate::bloom_filter::bloom_filter::BloomFilter;
 use crate::fence_pointer::fence_pointer::FencePointer;
-use bincode::Serializer;
+use bincode::{ErrorKind, Serializer};
 use crossbeam_skiplist::SkipMap;
 use flate2::write::DeflateEncoder;
 use flate2::Compression;
@@ -10,22 +10,17 @@ use crate::bloom_filter::BloomFilter;
 use crate::rust_store;
 use bincode::Options;
 use flate2::read::DeflateDecoder;
-use log::{debug, error, info, warn};
-use serde::de::DeserializeOwned;
+use log::{debug, error, info, trace, warn};
 use std::fmt::Debug;
 use std::fs::{remove_file, File};
-use std::hash::Hash;
+use std::io;
 use std::io::prelude::*;
-use std::io::{BufWriter, Cursor, SeekFrom};
+use std::io::{BufReader, BufWriter, Cursor, SeekFrom};
 use std::io::{Read, Write};
-use std::path::Component::CurDir;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::{io, mem};
 use thiserror::Error;
-// use tokio::io::AsyncWriteExt;
-// use tokio::io::AsyncWriteExt;
 
 #[derive(Error, Debug)]
 pub enum RunError {
@@ -64,7 +59,7 @@ impl Level {
 }
 
 #[derive(Serialize, Deserialize)]
-struct Item<K: Ord + Copy> {
+pub struct Item<K: Ord + Copy> {
     key: K,
     value: Vec<u8>,
 }
@@ -75,11 +70,19 @@ impl<K: Ord + Copy> Item<K> {
             value: value,
         };
     }
+
+    pub fn key(self) -> K {
+        return self.key;
+    }
+
+    pub fn value(self) -> Vec<u8> {
+        return self.value;
+    }
 }
 
 //this struct lives at the end of the on disk file
-// ie in the last sizeof(RunError) bytes
-// K -> key type
+// the last 8 bytes are a u64 describing the length of the serialized representation
+//
 #[derive(Serialize, Deserialize)]
 pub struct Run {
     pub num_pages: usize,
@@ -93,7 +96,6 @@ pub struct Run {
 impl Run {
     // given a (full) SkipMap construct a run from it
     // on disk each run has metadata, and two files. One of values and one of keys.
-    #[allow(dead_code)]
     pub fn new_from_skipmap(
         memory_map: Arc<SkipMap<i32, Vec<u8>>>,
         config: &rust_store::Config,
@@ -126,7 +128,7 @@ impl Run {
         path.push(file_name);
         let file = File::create(&path)?;
         info!("Run file name {}", &file.metadata().unwrap().len());
-        let mut writer = BufWriter::new(file);
+        let writer = BufWriter::new(file);
 
         // This is an index into a page
         let mut idx: u64 = 0;
@@ -244,7 +246,16 @@ impl Run {
         return Ok(run);
     }
 
-    pub async fn load(path: String) -> Result<Run, RunError> {
+    // pub fn runs_to_iterator(left: Run, Right: Run) -> impl Iterator<Item=Item<i32>> {
+    //     unimplemented!();
+    // }
+
+    /// Merge a memory map into an existing run
+    // pub fn memory_map_into_run(map: SkipMap<i32, Vec<u8>>, run: Run) -> Run {
+    //
+    // }
+
+    pub fn load(path: String) -> Result<Run, RunError> {
         // // TODO figure out config and root file directory stuff
         // let mut f = File::open(path).await?;
         // let _ = f.seek(SeekFrom::End(-8)).await?;
@@ -277,7 +288,7 @@ impl Run {
             return None;
         }
 
-        let maybe_val = self.get_from_page(page_idx.unwrap(), key);
+        let maybe_val = self.get_from_block(page_idx.unwrap(), key);
         return maybe_val.unwrap();
         // return match maybe_val {
         //     Ok(None) => None,
@@ -294,12 +305,12 @@ impl Run {
         // };
     }
 
-    fn get_from_page(self: &Self, page: u64, key: &i32) -> Result<Option<Vec<u8>>, RunError> {
-        debug!("get_from_page: opening file {:?}", &self.file_name);
+    fn get_from_block(self: &Self, page: u64, key: &i32) -> Result<Option<Vec<u8>>, RunError> {
+        debug!("get_from_block: opening file {:?}", &self.file_name);
         let mut f = File::open(&self.file_name)?;
         let _ = f.seek(SeekFrom::Start(page * self.block_size))?;
         let mut page_buf = vec![0u8; self.block_size as usize];
-        let _ = f.read_exact(&mut page_buf)?;
+        let _ = f.read(&mut page_buf)?;
 
         let bincode_opts = bincode::DefaultOptions::new();
         bincode_opts.allow_trailing_bytes();
@@ -318,14 +329,19 @@ impl Run {
             // let item_length: u64 = bincode_opts.deserialize(&mut decompress_bytes)?;
             let item: Item<i32> = match bincode_opts.deserialize_from(&mut decompressed_cursor) {
                 Ok(x) => x,
-                Err(E) => return Err(RunError::DeserializeError(E)),
+                Err(e) => {
+                    return match *e {
+                        ErrorKind::Io(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                            Ok(None)
+                        }
+                        _ => Err(RunError::DeserializeError(e)),
+                    }
+                }
             };
             if item.key == *key {
                 return Ok(Some(item.value));
             }
         }
-
-        // return Ok(None);
     }
 
     /// Given a key, find which page the value is on
@@ -344,6 +360,135 @@ impl Run {
     pub fn delete(self: Self) -> Result<(), RunError> {
         remove_file(self.file_name)?;
         return Ok(());
+    }
+}
+
+/// We only need a reference because we are not iterating over memory in the Run struct
+/// but over the file associated with the run.
+impl IntoIterator for &Run {
+    type Item = Item<i32>;
+    type IntoIter = RunIterator;
+
+    fn into_iter(self) -> Self::IntoIter {
+        let f = File::open(&self.file_name);
+        debug!("Into iter opening {:?}", &self.file_name);
+
+        if f.is_err() {
+            let err = f.err();
+            warn!(
+                "IO Error for {:?} during run into_iter {:?}",
+                &self.file_name, err
+            );
+            return RunIterator {
+                error: Some(RunError::IoError(err.unwrap())),
+                reader: None,
+                block_size: self.block_size,
+                /// only need this cursor since now it owns the block
+                decompressed_block_cursor: Cursor::new(vec![0u8]),
+                deserializer: bincode::DefaultOptions::new(),
+            };
+        } else {
+            let mut reader = BufReader::new(f.unwrap());
+
+            let mut block_buf = vec![0u8; self.block_size as usize];
+            let bincode_opts = bincode::DefaultOptions::new();
+            bincode_opts.allow_trailing_bytes();
+
+            let mut decompressed: Vec<u8> = Vec::new();
+
+            let read_res = reader.read_exact(&mut block_buf);
+
+            let mut deflater = DeflateDecoder::new(Cursor::new(block_buf));
+            let _ = deflater.read_to_end(&mut decompressed).unwrap();
+            let decompressed_cursor = Cursor::new(decompressed);
+
+            if read_res.is_err() {
+                return RunIterator {
+                    error: Some(RunError::IoError(read_res.err().unwrap())),
+                    reader: Some(reader),
+                    block_size: self.block_size,
+                    /// only need this cursor since now it owns the block
+                    decompressed_block_cursor: decompressed_cursor,
+                    deserializer: bincode_opts,
+                };
+            }
+
+            return RunIterator {
+                error: None,
+                reader: Some(reader),
+                block_size: self.block_size,
+                /// only need this cursor since now it owns the block
+                decompressed_block_cursor: decompressed_cursor,
+                deserializer: bincode_opts,
+            };
+        }
+    }
+}
+
+/// As we iterate over the run, we load a block at a time off of disk
+pub struct RunIterator {
+    error: Option<RunError>,
+    reader: Option<BufReader<File>>,
+    decompressed_block_cursor: Cursor<Vec<u8>>,
+    block_size: u64,
+    deserializer: bincode::DefaultOptions,
+}
+
+impl Iterator for RunIterator {
+    type Item = Item<i32>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        debug_assert!(self.reader.is_some());
+        if self.error.is_some() {
+            warn!(
+                "Tried to get item from RUnIterator in broken state: {}",
+                self.error.as_ref().unwrap()
+            );
+            return None;
+        }
+
+        let item_res: Result<Item<i32>, bincode::Error> = self
+            .deserializer
+            .deserialize_from(&mut self.decompressed_block_cursor);
+
+        if item_res.is_err() {
+            // First error is expected, we are out of stuff to deserialize,
+            // a second error is a legitimate error.
+
+            debug!("Error derializing page in run iterator, attempting to read next page");
+            let mut block_buf = vec![0u8; self.block_size as usize];
+            let reader = self.reader.as_mut();
+            let num_read_bytes = reader.unwrap().read(&mut block_buf);
+            trace!(
+                "Read {:?} bytes on next block of RunIterator",
+                num_read_bytes
+            );
+
+            let mut deflater = DeflateDecoder::new(Cursor::new(block_buf));
+            let mut decompressed: Vec<u8> = Vec::new();
+            if decompressed.len() == 0 {
+                return None;
+            }
+
+            let _ = deflater.read_to_end(&mut decompressed).unwrap();
+            let decompressed_cursor = Cursor::new(decompressed);
+            self.decompressed_block_cursor = decompressed_cursor;
+
+            let maybe_item = self
+                .deserializer
+                .deserialize_from(&mut self.decompressed_block_cursor);
+            match maybe_item {
+                Ok(x) => Some(x),
+                Err(e) => {
+                    error!("Got error {} on first read of page", e);
+                    self.error = Some(RunError::DeserializeError(e));
+                    None
+                }
+            }
+        } else {
+            let item = item_res.unwrap();
+            return Some(item);
+        }
     }
 }
 
@@ -408,11 +553,44 @@ mod test_run {
             map.insert(i, vec![i as u8]);
         }
         let run = Run::new_from_skipmap(map, &config).unwrap();
-        let val = run.get_from_run(&91);
         for i in 0..250 {
             let val = run.get_from_run(&i);
             assert_eq!(val.unwrap()[0], i as u8);
         }
+        run.delete().unwrap();
+    }
+
+    #[test]
+    fn small_run_get_no_result() {
+        // env_logger::init();
+        info!("Running small_run_get");
+        let mut config = Config::default();
+        let dir = tempdir().unwrap();
+        config.set_directory(dir.path());
+        let map = Arc::new(SkipMap::new());
+        for i in 0..250 {
+            map.insert(i, vec![i as u8]);
+        }
+        let run = Run::new_from_skipmap(map, &config).unwrap();
+        let val = run.get_from_run(&42000);
+        assert_eq!(val, None);
+        run.delete().unwrap();
+    }
+
+    #[test]
+    fn run_get_from_block() {
+        // env_logger::init();
+        info!("Running small_run_get");
+        let mut config = Config::default();
+        let dir = tempdir().unwrap();
+        config.set_directory(dir.path());
+        let map = Arc::new(SkipMap::new());
+        for i in 0..250 {
+            map.insert(i, vec![i as u8]);
+        }
+        let run = Run::new_from_skipmap(map, &config).unwrap();
+        let val = run.get_from_block(0, &42000);
+        assert_eq!(val.unwrap(), None);
         run.delete().unwrap();
     }
 
@@ -459,5 +637,30 @@ mod test_run {
             map.insert(rand_key, rand_val);
         }
         return map;
+    }
+
+    #[test_case( 5 ; "one block")]
+    #[test_case(3000 ; "several blocks")]
+    fn test_run_iter(num_items: i32) {
+        // env_logger::init();
+        info!("Running small_run_get");
+        let mut config = Config::default();
+        let dir = tempdir().unwrap();
+        config.set_directory(dir.path());
+        let map = Arc::new(SkipMap::new());
+        for i in 0..num_items {
+            map.insert(i, vec![i as u8]);
+        }
+        for x in map.clone().iter() {
+            println!("{:?} {:?}", x.key(), x.value());
+        }
+        let run = Run::new_from_skipmap(map, &config).unwrap();
+        let mut i = 0;
+        for key_val in &run {
+            assert_eq!(key_val.value[0], i as u8);
+            assert_eq!(key_val.key, i);
+            i += 1;
+        }
+        run.delete().unwrap();
     }
 }
