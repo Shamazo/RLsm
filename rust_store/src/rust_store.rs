@@ -1,5 +1,4 @@
 use crate::lsm::{Lsm, LsmError};
-use crate::run;
 use crate::run::RunError;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
