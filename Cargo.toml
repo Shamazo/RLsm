@@ -1,2 +1,2 @@
 [workspace]
-members = ["client", "rust_store", "mockserver", "rust_store"]
+members = ["rust_store"]
