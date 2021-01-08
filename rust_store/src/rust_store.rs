@@ -148,10 +148,11 @@ impl RustStore {
     /// ```
     /// // You can have rust code between fences inside the comments
     /// // If you pass --test to `rustdoc`, it will even test it for you!
-    /// use rust_kv::{Config, new, get};
+    /// use rust_kv::{Config, RustStore};
     /// let config = Config::default();
     ///
-    /// let db = new(config);
+    /// // Equivalent to RustStore::new(None) since we are using default options
+    /// let db = RustStore::new(Some(config));
     /// let key = 42;
     /// let val = db.get(&42);
     /// ```
@@ -168,10 +169,10 @@ impl RustStore {
     /// # Examples
     ///
     //     ```
-    //     use rust_kv::{Config, new, get};
+    //     use rust_kv::{Config, RustStore};
     //     let config = Config::default();
     //
-    //     let db = new(config);
+    //     let db = RustStore::new(config);
     //     let key = 42;
     //     let put_val = vec![43_u8, 44_u8];
     //     let get_val = db.get(&42);

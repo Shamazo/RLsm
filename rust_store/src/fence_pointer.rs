@@ -1,6 +1,8 @@
 pub mod fence_pointer {
     use serde::{Deserialize, Serialize};
     use std::cmp::Ord;
+    use std::mem::size_of;
+
     // T is the Key type
     #[derive(Serialize, Deserialize, Debug)]
     pub struct FencePointer<T: Ord> {
@@ -14,6 +16,9 @@ pub mod fence_pointer {
         }
         pub fn new(l: T, h: T) -> FencePointer<T> {
             return FencePointer { low: l, high: h };
+        }
+        pub fn size_in_bytes(&self) -> usize {
+            return 2 * size_of::<T>();
         }
     }
 }

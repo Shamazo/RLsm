@@ -10,6 +10,8 @@ use crate::bloom_filter::BloomFilter;
 use crate::rust_store;
 use bincode::Options;
 use flate2::read::DeflateDecoder;
+use itertools::EitherOrBoth::{Both, Left, Right};
+use itertools::Itertools;
 use log::{debug, error, info, trace, warn};
 use std::fmt::Debug;
 use std::fs::{remove_file, File};
@@ -36,7 +38,7 @@ pub enum RunError {
 
 pub struct Level {
     pub num_runs: usize, // doesn't need to be atomic because Levels are wrapped in RwLocks
-    pub runs: Vec<Run>,
+    pub runs: Vec<Arc<Run>>,
 }
 
 impl Level {
@@ -82,24 +84,38 @@ impl<K: Ord + Copy> Item<K> {
 
 //this struct lives at the end of the on disk file
 // the last 8 bytes are a u64 describing the length of the serialized representation
-//
 #[derive(Serialize, Deserialize)]
 pub struct Run {
-    pub num_pages: usize,
+    pub num_blocks: usize,
     pub level: usize,
     bloom_filter: BloomFilter,
     fence_pointers: Vec<FencePointer<i32>>,
     pub file_name: PathBuf,
     block_size: u64,
+    size_in_bytes: usize,
+    num_elements: usize,
 }
 
 impl Run {
+    /// Get disk usage in bytes
+    pub fn size_in_bytes(self: &Self) -> usize {
+        return self.size_in_bytes;
+    }
+
+    pub fn get_memory_use_in_bytes(self: &Self) -> usize {
+        return self.bloom_filter.size_in_bytes()
+            + self.num_blocks * self.fence_pointers[0].size_in_bytes();
+    }
+
     // given a (full) SkipMap construct a run from it
     // on disk each run has metadata, and two files. One of values and one of keys.
+    // this can be refactored to use run_from_iterator once I implement my own Skiplist, or
+    // wrap the cross bream skiplist to return Items
     pub fn new_from_skipmap(
         memory_map: Arc<SkipMap<i32, Vec<u8>>>,
         config: &rust_store::Config,
     ) -> Result<Run, RunError> {
+        let num_elements = memory_map.len();
         if memory_map.len() == 0 {
             return Err(RunError::RunCreationError);
         }
@@ -167,17 +183,17 @@ impl Run {
                 debug!(
                     "Writing page with {} bytes with {} bytes of padding. with min {:?} max {:?}",
                     idx,
-                    4096 - idx,
+                    config.block_size - idx,
                     &min_val,
                     &max_val
                 );
                 idx = idx + padding_byte_len;
 
-                if idx != 4096 {
+                if idx != config.block_size {
                     warn!("idx is not page size {}", idx);
-                    debug_assert!(idx == 4096);
+                    debug_assert!(idx == config.block_size);
                 }
-                // open ip a new encoder for the next page
+                // open up a new encoder for the next page
                 writer.flush()?;
                 encoder = DeflateEncoder::new(writer, Compression::default());
                 idx = 0;
@@ -198,7 +214,7 @@ impl Run {
                     idx,
                     encoder.total_out()
                 );
-                debug_assert!(idx < 4096);
+                debug_assert!(idx < config.block_size);
             }
         }
 
@@ -211,7 +227,7 @@ impl Run {
         debug!(
             "Writing page with {} bytes with {} bytes of padding. with min {:?} max {:?}",
             idx,
-            4096 - idx,
+            config.block_size - idx,
             min_val,
             max_val
         );
@@ -228,14 +244,24 @@ impl Run {
             );
             debug_assert!(fence_pointers.len() == num_pages);
         }
-        info!("Creating run {:?} metadata with {} pages", path, num_pages);
+
+        let run_bytes = fence_pointers.len() * config.block_size as usize
+            + filter.size_in_bytes()
+            + fence_pointers.len() * fence_pointers[0].size_in_bytes();
+
+        info!(
+            "Creating run {:?} metadata with {} pages total size in bytes {}",
+            path, num_pages, run_bytes
+        );
         let run = Run {
-            num_pages: fence_pointers.len(),
+            num_blocks: fence_pointers.len(),
             level: 1,
             bloom_filter: filter,
             fence_pointers: fence_pointers,
             file_name: path.clone(),
             block_size: config.block_size,
+            size_in_bytes: run_bytes,
+            num_elements: num_elements,
         };
 
         let ser_meta = bincode::serialize(&run)?;
@@ -246,14 +272,206 @@ impl Run {
         return Ok(run);
     }
 
-    // pub fn runs_to_iterator(left: Run, Right: Run) -> impl Iterator<Item=Item<i32>> {
-    //     unimplemented!();
-    // }
+    /// given an iterator that produces Items create a new run at the designated level
+    fn run_from_iterator<K>(
+        it: K,
+        config: &rust_store::Config,
+        level: usize,
+        num_elements: usize,
+    ) -> Result<Run, RunError>
+    where
+        K: Iterator<Item = Item<i32>>,
+    {
+        let fpr = 0.1; // TODO calculate the intended fpr using level
 
-    /// Merge a memory map into an existing run
-    // pub fn memory_map_into_run(map: SkipMap<i32, Vec<u8>>, run: Run) -> Run {
-    //
-    // }
+        let mut filter = BloomFilter::new_with_rate(fpr, num_elements);
+        let mut fence_pointers = vec![];
+
+        let mut min_val: i32 = 0;
+        let mut max_val: i32 = 0;
+
+        let now = SystemTime::now();
+        let epoch_time = now
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_millis();
+        let file_name = format!("1_{}.run", epoch_time);
+        let mut path = match &config.directory {
+            None => "".parse().unwrap(),
+            Some(pb) => pb.clone(),
+        };
+        path.push(file_name);
+        let file = File::create(&path)?;
+        info!("Run file name {}", &file.metadata().unwrap().len());
+        let writer = BufWriter::new(file);
+
+        // This is an index into a page
+        let mut idx: u64 = 0;
+        let mut num_pages: usize = 1;
+
+        // data goes from memory map -> serialization -> compressor -> file
+
+        // We use the default options because we want varint encoding on our lengths
+        let bincode_opts = bincode::DefaultOptions::new();
+        let mut encoder = DeflateEncoder::new(writer, Compression::default());
+        // we compress each page individually
+
+        for item in it {
+            encoder.flush()?;
+            idx = encoder.total_out();
+            filter.insert(&item.key);
+            // we use ser_length because I don't know how to get compressed length
+            let ser_length = bincode_opts.serialized_size(&item)?;
+            // finish out the page
+            if idx + ser_length >= config.block_size - 20 {
+                // finish out the encoder for each page so each page can be independently decoded.
+                let mut writer = encoder.finish()?;
+                // The wirter writes the bytes 0x3 and 0x0 to mark the end of the stream
+                idx += 2;
+                if idx > config.block_size - 1 {
+                    error!("Wrote more than a page of bytes {}", idx);
+                    debug_assert!(idx <= config.block_size);
+                }
+
+                // pad out the rest of the page
+                let zeros = vec![4u8; (config.block_size - idx) as usize];
+                let padding_byte_len = writer.write(&zeros)? as u64;
+
+                debug!(
+                    "Writing page with {} bytes with {} bytes of padding. with min {:?} max {:?}",
+                    idx,
+                    config.block_size - idx,
+                    &min_val,
+                    &max_val
+                );
+                idx = idx + padding_byte_len;
+
+                if idx != config.block_size {
+                    warn!("idx is not page size {}", idx);
+                    debug_assert!(idx == config.block_size);
+                }
+                // open up a new encoder for the next page
+                writer.flush()?;
+                encoder = DeflateEncoder::new(writer, Compression::default());
+                idx = 0;
+                fence_pointers.push(FencePointer::new(min_val, max_val));
+
+                // start the next page.
+                // if there is a bug related to min/max values if there is one value on a page, this is why
+                num_pages += 1;
+                min_val = item.key;
+                bincode_opts.serialize_into(&mut encoder, &item)?;
+            } else {
+                bincode_opts.serialize_into(&mut encoder, &item)?;
+                max_val = item.key;
+            }
+            if !(idx < config.block_size as u64) {
+                error!(
+                    "idx too big! idx: {}, encoder total: {} ",
+                    idx,
+                    encoder.total_out()
+                );
+                debug_assert!(idx < config.block_size);
+            }
+        }
+
+        //close out the last page
+        // finish the page
+        let mut writer = encoder.finish()?;
+        idx += 2;
+        let zeros = vec![4u8; (config.block_size - idx) as usize];
+        let padding_byte_len = writer.write(&zeros)? as u64;
+        debug!(
+            "Writing page with {} bytes with {} bytes of padding. with min {:?} max {:?}",
+            idx,
+            config.block_size - idx,
+            min_val,
+            max_val
+        );
+        idx = idx + padding_byte_len;
+        debug_assert!(idx == config.block_size as u64);
+        fence_pointers.push(FencePointer::new(min_val, max_val));
+
+        // The metadata struct is not compressed
+        if fence_pointers.len() != num_pages {
+            error!(
+                "num fence pointers ({}) !- num pages ({})",
+                fence_pointers.len(),
+                num_pages
+            );
+            debug_assert!(fence_pointers.len() == num_pages);
+        }
+
+        let run_bytes = fence_pointers.len() * config.block_size as usize
+            + filter.size_in_bytes()
+            + fence_pointers.len() * fence_pointers[0].size_in_bytes();
+
+        info!(
+            "Creating run {:?} metadata with {} pages total size in bytes {}",
+            path, num_pages, run_bytes
+        );
+        let run = Run {
+            num_blocks: fence_pointers.len(),
+            level: level,
+            bloom_filter: filter,
+            fence_pointers: fence_pointers,
+            file_name: path.clone(),
+            block_size: config.block_size,
+            size_in_bytes: run_bytes,
+            num_elements: num_elements,
+        };
+
+        let ser_meta = bincode::serialize(&run)?;
+        let ser_meta_length = writer.write(&ser_meta)?;
+        let ser_ser_meta_length = bincode::serialize(&ser_meta_length)?;
+        writer.write(&ser_ser_meta_length)?;
+        writer.flush()?;
+        return Ok(run);
+    }
+
+    /// Given two runs, return an iterator over their merged items
+    /// If keys exist in both left and right, then the key is disgarded from the righ iterator
+    /// i.e left MUST be the newer run and right must be the older run.
+    pub fn runs_to_iterator(left: Arc<Run>, right: Arc<Run>) -> impl Iterator<Item = Item<i32>> {
+        return left
+            .into_iter()
+            .merge_join_by(right.into_iter(), |i, j| {
+                let jkey = j.key;
+                i.key.cmp(&jkey)
+            })
+            .map(|either| match either {
+                Left(x) => x,
+                Right(x) => x,
+                Both(x, _) => x,
+            });
+    }
+
+    /// Merge a memory map into an existing level 1 run
+    /// without consuming the memory map, since we want to keep reading from it while doing this operation
+    pub fn merge_memory_map_into_run(
+        map: Arc<SkipMap<i32, Vec<u8>>>,
+        run: Arc<Run>,
+        config: &rust_store::Config,
+    ) -> Result<Run, RunError> {
+        debug_assert!(run.level == 1);
+        let it = map
+            .iter()
+            .merge_join_by(run.into_iter(), |i, j| {
+                let jkey = j.key;
+                i.key().cmp(&jkey)
+            })
+            .map(|either| match either {
+                Left(x) => Item::new(x.key().clone(), x.value().clone()),
+                Right(x) => x,
+                Both(x, _) => Item::new(x.key().clone(), x.value().clone()),
+            });
+
+        // TODO figure out how to get a better estimate of elements
+        // Since this implemented as an iterator, we would need to consume it to get the count,
+        // which defeats the point of having an iterator.
+        let num_elements = map.len();
+        return Run::run_from_iterator(it, config, 1, num_elements);
+    }
 
     pub fn load(path: String) -> Result<Run, RunError> {
         // // TODO figure out config and root file directory stuff
@@ -270,7 +488,7 @@ impl Run {
     }
 
     #[allow(dead_code)]
-    pub fn new_from_merge(left: Run, right: Run) -> Result<Run, RunError> {
+    pub fn new_from_merge(left: &Run, right: &Run) -> Result<Run, RunError> {
         return Err(RunError::NotImplemented);
     }
 
@@ -517,7 +735,7 @@ mod test_run {
         info!("Running small_run_from_memory_map");
         let map = create_skipmap(1000);
         let run = Run::new_from_skipmap(map, &config).unwrap();
-        info!("Num pages {}", run.num_pages);
+        info!("Num pages {}", run.num_blocks);
         run.delete().unwrap();
     }
 
@@ -594,6 +812,39 @@ mod test_run {
         run.delete().unwrap();
     }
 
+    #[test]
+    fn merge_memorymap_into_run() {
+        // env_logger::init();
+        info!("Running small_run_get");
+        let mut config = Config::default();
+        let dir = tempdir().unwrap();
+        config.set_directory(dir.path());
+        let map = create_skipmap(2000);
+        for i in 0..50 {
+            map.insert(i, vec![i as u8]);
+        }
+        let run = Arc::new(Run::new_from_skipmap(map, &config).unwrap());
+
+        let new_map = Arc::new(SkipMap::new());
+
+        for i in 0..50 {
+            new_map.insert(i, vec![(i * 2) as u8]);
+        }
+
+        let new_run =
+            Arc::new(Run::merge_memory_map_into_run(new_map, run.clone(), &config).unwrap());
+        for i in 0..50 {
+            let val = new_run.get_from_run(&i).unwrap();
+            assert!(val == vec![(i * 2) as u8]);
+        }
+
+        // TODO is this the correct way to unwrap a Arc?
+        // seems like it works if you know for sure that no other references exist
+        Arc::try_unwrap(run).ok().unwrap().delete().unwrap();
+        Arc::try_unwrap(new_run).ok().unwrap().delete().unwrap();
+    }
+
+    #[allow(non_snake_case)]
     #[test_case( 512 ; "0.125 KB")]
     #[test_case(1024 ; "0.25 KB")]
     #[test_case(2048 ; "0.5 KB")]
@@ -603,10 +854,11 @@ mod test_run {
     #[test_case(32768 ; "8 KB")]
     #[test_case(65536 ; "16 KB")]
     #[test_case(131072 ; "32 KB")]
-    fn construct_1MB_run_varying_block_size(page_size: u64) {
+    fn construct_1MB_run_varying_block_size(block_size: u64) {
         // env_logger::init();
         info!("Running construct_large_run_random_vals");
         let mut config = Config::default();
+        config.set_block_size(block_size).unwrap();
         let dir = tempdir().unwrap();
         config.set_directory(dir.path());
         let map = create_skipmap(4 * 1024 * 1024);

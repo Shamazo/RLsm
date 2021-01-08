@@ -68,6 +68,11 @@ impl BloomFilter {
         }
     }
 
+    pub fn size_in_bytes(self: &Self) -> usize {
+        //bit vector + num hashes + seeds
+        return self.bits.len() / 8 + 8 * 4 * self.num_hashes;
+    }
+
     pub fn new_with_rate(fpr: f32, expected_num_items: usize) -> BloomFilter {
         let bits = needed_bits(fpr, expected_num_items);
         return BloomFilter::new_with_size(bits, optimal_num_hashes(bits, expected_num_items));

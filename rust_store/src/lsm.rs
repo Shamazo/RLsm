@@ -184,13 +184,13 @@ impl Lsm {
             debug_assert!(levels.len() == level - 1);
             levels.push(RwLock::new(Level {
                 num_runs: 1,
-                runs: vec![run],
+                runs: vec![Arc::new(run)],
             }))
         } else {
             info!("inserting into existing level {}", &level);
             debug_assert!(levels.len() > level - 1);
             let mut level = &mut *levels[level - 1].write();
-            level.runs.push(run);
+            level.runs.push(Arc::new(run));
             level.num_runs += 1;
         }
         info!("Completed adding run to level {}", &level);
@@ -293,7 +293,7 @@ mod test_run {
         config.set_directory(dir.path());
         let lsm = Lsm::new(Some(config));
         lsm.put(42, vec![042u8]).unwrap();
-        for i in 0..10 {
+        for _ in 0..10 {
             insert_vals(lsm.clone(), 1100);
             sleep(Duration::new(3, 0));
         }
