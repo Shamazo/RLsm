@@ -3,38 +3,6 @@ on: [push]
 name: CI
 
 jobs:
-  test_client:
-    name: Test python client
-    timeout-minutes: 30
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - name: Checkout submodules
-        uses: textbook/git-checkout-submodule-action@master
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-      - name: Set up Python 3.8
-        uses: actions/setup-python@v2
-        with:
-          python-version: 3.8
-      - name: python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install pytest grpcio-tools numpy
-      - name: Build mockserver
-        run: cargo build --bin mockserver
-      - name: test python client
-        run: |
-          python -m grpc_tools.protoc -I ${{ github.workspace }}/protos --python_out=${{ github.workspace }}/systemtesting --grpc_python_out=${{ github.workspace }}/systemtesting ${{ github.workspace }}/protos/kv.proto
-          ${{ github.workspace }}/target/debug/mockserver &
-          cd systemtesting
-          pytest
-      - uses: actions/upload-artifact@v2
-        with:
-          name: mock_server_log
-          path: ${{ github.workspace }}/systemtesting/mockserver.log
-
   unit_tests:
     name: Rust Unit Tests
     timeout-minutes: 30
