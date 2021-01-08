@@ -168,18 +168,16 @@ impl RustStore {
     /// * `value` - key associated with val
     /// # Examples
     ///
-    /// ```
-    /// // You can have rust code between fences inside the comments
-    /// // If you pass --test to `rustdoc`, it will even test it for you!
-    /// use rust_kv::{Config, new, get};
-    /// let config = Config::default();
-    ///
-    /// let db = new(config);
-    /// let key = 42;
-    /// let put_val = vec![43_u8, 44_u8];
-    /// let get_val = db.get(&42);
-    /// // get_val == put_val
-    /// ```
+    //     ```
+    //     use rust_kv::{Config, new, get};
+    //     let config = Config::default();
+    //
+    //     let db = new(config);
+    //     let key = 42;
+    //     let put_val = vec![43_u8, 44_u8];
+    //     let get_val = db.get(&42);
+    //     // get_val == put_val
+    //     ```
     pub fn put(self: &Self, key: i32, value: Vec<u8>) -> Result<(), RustStoreError> {
         let res = self.lsm.put(key, value)?;
         return Ok(res);

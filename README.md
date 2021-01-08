@@ -1,10 +1,21 @@
 # RLsm
-A (WIP) LSM based key-value store written in rust
+A (WIP) LSM based key-value store written in rust.
 
-### Flatbuffers
-To have decent Rust support with flatbuffers we need to use the latest master. To make things easier this repo has a flatbuffers submodule.  To get started clone this repo with the `--recurse-submodules` option. Then run `build_flatbuffers.py` in the root of the repo to generate flatbuffer code for the python and rust clients. 
+A very basic example:
+```
+use rust_kv::{Config, new, get};
+let config = Config::default();
+
+    let db = new(config);
+    let key = 42;
+    let put_val = vec![43_u8, 44_u8];
+    let get_val = db.get(&42);
+    // get_val == put_val
+```
+
 
 to do 
 - github actions to build and run tests
-- design/implement benchmarks 
+- code coverage
+- design/implement more extensive benchmarks 
 - design doc 
