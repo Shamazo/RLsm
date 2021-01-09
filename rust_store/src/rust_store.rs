@@ -183,3 +183,58 @@ impl RustStore {
         return Ok(res);
     }
 }
+
+#[cfg(test)]
+mod test_rust_store {
+    use crate::{Config, RustStore, RustStoreError};
+    use log::info;
+    use rand::Rng;
+    use rand_chacha::rand_core::SeedableRng;
+    use rand_chacha::ChaChaRng;
+    use std::thread::sleep;
+    use tempfile::tempdir;
+    use test_case::test_case;
+    // use test_env_log::test;
+
+    #[test_case( 5 ; "handleful of key-value pairs")]
+    #[test_case(500 ; "500 key-value pairs")]
+    #[test_case(5000 ; "5000 key-value pairs")]
+    fn simple_test(num_pairs: usize) {
+        // env_logger::init();
+        let mut config = Config::default();
+        let dir = tempdir().unwrap();
+        config.set_directory(dir.path());
+
+        let db = RustStore::new(Some(config));
+
+        let mut values = Vec::new();
+        let mut keys = Vec::new();
+        let seed = [42; 32];
+        let mut rng = ChaChaRng::from_seed(seed);
+        for _ in 0..num_pairs {
+            values.push(gen_rand_bytes(&mut rng));
+            keys.push(rng.gen_range(-10000..10000));
+        }
+
+        for i in 0..num_pairs {
+            db.put(keys[i], values[i].clone()).unwrap();
+        }
+    }
+
+    #[test]
+    fn simple_test() {
+        // env_logger::init();
+        let mut config = Config::default();
+        let res = config.set_block_size(0);
+        assert!(res.is_err());
+    }
+
+    // generates a random number of random bytes
+    // TODO move these helpers into a utilities mod
+    fn gen_rand_bytes<T: Rng>(mut rng: &mut T) -> Vec<u8> {
+        let num_bytes = rng.gen_range(1..256);
+        let mut ret_vec = vec![0u8; num_bytes];
+        rng.fill_bytes(&mut ret_vec);
+        return ret_vec;
+    }
+}

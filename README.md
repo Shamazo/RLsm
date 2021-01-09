@@ -1,3 +1,5 @@
+[![codecov](https://codecov.io/gh/Shamazo/RLsm/branch/master/graph/badge.svg?token=yc5E3qaij9)](https://codecov.io/gh/Shamazo/RLsm)
+![example workflow name](https://github.com/Shamazo/RLsm/workflows/CI/badge.svg)
 # RLsm
 A (WIP) LSM based key-value store written in rust.
 
@@ -14,8 +16,7 @@ let config = Config::default();
 ```
 
 
-to do 
-- github actions to build and run tests
-- code coverage
+to do
 - design/implement more extensive benchmarks 
 - design doc 
+- compaction 
