@@ -16,12 +16,6 @@ jobs:
           toolchain: stable
       - name: Run tests
         run: cargo test
-      - name: Run Benchmarks
-        run: cargo bench
-      - uses: actions/upload-artifact@v2
-        with:
-          name: mock_server_log
-          path: $GITHUB_WORKSPACE/systemtesting/mockserver.log
   check:
     name: code coverage
     runs-on: ubuntu-latest
