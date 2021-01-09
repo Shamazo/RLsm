@@ -261,6 +261,7 @@ mod test_run {
     use tempfile::tempdir;
     // use test_case::test_case;
     use crate::lsm::Lsm;
+    use std::sync::atomic::Ordering;
     use std::sync::Arc;
     use std::time::Duration;
     use test_env_log::test;
@@ -301,7 +302,7 @@ mod test_run {
         config.set_directory(dir.path());
         let lsm = Lsm::new(Some(config));
         lsm.put(42, vec![042u8]);
-        for _ in 0..10 {
+        for i in 0..10 {
             insert_vals(lsm.clone(), 1100);
             sleep(Duration::new(3, 0));
         }
@@ -310,6 +311,11 @@ mod test_run {
         assert_eq!(lsm.get(&41).unwrap(), vec![041u8]);
 
         sleep(Duration::new(2, 0));
+
+        let val = lsm.get(&42);
+        assert_eq!(val, Some(vec![042u8]));
+        let val = lsm.get(&41);
+        assert_eq!(val, Some(vec![041u8]));
 
         let db_files = fs::read_dir(dir.path()).unwrap();
 
