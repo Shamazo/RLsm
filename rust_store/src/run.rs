@@ -724,6 +724,7 @@ mod test_run {
     use tempfile::tempdir;
     use test_case::test_case;
     // use test_env_log::test;
+    use rand::prelude::SliceRandom;
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -813,30 +814,47 @@ mod test_run {
         run.delete().unwrap();
     }
 
-    #[test]
-    fn merge_memorymap_into_run() {
+    #[test_case( 50, 50; "small map into small run")]
+    #[test_case( 50, 5000; "small map into large run")]
+    // TODO neither of these large map tests cases appears to actually run in a reasonable amount of time
+    // need to profile what is going on .
+    // #[test_case( 5000, 50; "lerge map into small run")]
+    // #[test_case( 5000, 50000; "large map into large run")]
+    fn merge_memorymap_into_run(memmap_size: i32, run_size: i32) {
         // env_logger::init();
         info!("Running small_run_get");
         let mut config = Config::default();
         let dir = tempdir().unwrap();
         config.set_directory(dir.path());
         let map = create_skipmap(2000);
-        for i in 0..50 {
+        for i in 0..run_size {
             map.insert(i, Some(vec![i as u8]));
         }
         let run = Arc::new(Run::new_from_skipmap(map, &config).unwrap());
 
         let new_map = Arc::new(SkipMap::new());
 
-        for i in 0..50 {
-            new_map.insert(i, Some(vec![(i * 2) as u8]));
+        let mut new_keys = Vec::new();
+        let mut new_vals = Vec::new();
+        let seed = [42; 32];
+        let mut rng = ChaChaRng::from_seed(seed);
+
+        // we want some overlap in keys to test that we take the new values in the merge
+        for i in run_size / 2..memmap_size + run_size / 2 {
+            new_keys.push(i);
+            new_vals.push(Some(vec![(i % 127 * 2) as u8]));
+        }
+        new_keys.shuffle(&mut rng);
+
+        for i in 0..new_keys.len() {
+            new_map.insert(new_keys[i], new_vals[i].clone());
         }
 
         let new_run =
             Arc::new(Run::merge_memory_map_into_run(new_map, run.clone(), &config).unwrap());
-        for i in 0..50 {
-            let val = new_run.get_from_run(&i).unwrap();
-            assert!(val == vec![(i * 2) as u8]);
+        for i in 0..new_keys.len() {
+            let val = new_run.get_from_run(&new_keys[i]).unwrap();
+            assert!(&val == new_vals[i].as_ref().unwrap());
         }
 
         // TODO is this the correct way to unwrap a Arc?
