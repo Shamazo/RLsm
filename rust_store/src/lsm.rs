@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 use thiserror::Error;
-use tokio::time::Duration;
 
 #[derive(Error, Debug)]
 pub enum LsmError {
@@ -37,8 +37,8 @@ impl Catalogue {
 }
 
 pub struct Lsm {
-    primary_memory_map: Arc<SkipMap<i32, Vec<u8>>>,
-    secondary_memory_map: Arc<SkipMap<i32, Vec<u8>>>,
+    primary_memory_map: Arc<SkipMap<i32, Option<Vec<u8>>>>,
+    secondary_memory_map: Arc<SkipMap<i32, Option<Vec<u8>>>>,
     use_primary_map: AtomicBool,
     primary_memory_map_memory_use: AtomicU64,
     secondary_memory_map_memory_use: AtomicU64,
@@ -79,7 +79,6 @@ impl Lsm {
         return lsm;
     }
 
-    #[allow(dead_code)]
     pub fn get(self: &Self, key: &i32) -> Option<Vec<u8>> {
         // TODO verify locking
         // If use_primary_map is true that means newer data is in the primary map, so we should
@@ -91,25 +90,25 @@ impl Lsm {
             // let primary_map = self.primary_memory_map.read();
             let maybe_res = self.primary_memory_map.get(key);
             if maybe_res.is_some() {
-                return Some(maybe_res.unwrap().value().clone());
+                return maybe_res.unwrap().value().clone();
             }
 
             // let secondary_map = self.secondary_memory_map.read();
             let maybe_res = self.secondary_memory_map.get(key);
             if maybe_res.is_some() {
-                return Some(maybe_res.unwrap().value().clone());
+                return maybe_res.unwrap().value().clone();
             }
         } else {
             trace!("Getting value for key {} trying secondary map first", key);
 
             let maybe_res = self.secondary_memory_map.get(key);
             if maybe_res.is_some() {
-                return Some(maybe_res.unwrap().value().clone());
+                return maybe_res.unwrap().value().clone();
             }
 
             let maybe_res = self.primary_memory_map.get(key);
             if maybe_res.is_some() {
-                return Some(maybe_res.unwrap().value().clone());
+                return maybe_res.unwrap().value().clone();
             }
         }
 
@@ -130,23 +129,32 @@ impl Lsm {
 
         return None;
     }
-    pub fn put(self: &Self, key: i32, val: Vec<u8>) -> Result<(), LsmError> {
+
+    // Internally Values are stored as Option<Vec<u8>> and None is reserved to mean key deleted
+    pub fn delete(self: &Self, key: i32) -> () {
+        if self.use_primary_map.load(Ordering::SeqCst) {
+            self.primary_memory_map.insert(key, None);
+        } else {
+            self.secondary_memory_map.insert(key, None);
+        }
+    }
+
+    pub fn put(self: &Self, key: i32, val: Vec<u8>) -> () {
         if self.use_primary_map.load(Ordering::SeqCst) {
             trace!("Putting key {} into primary memmap", &key);
             let memuse =
                 self.primary_memory_map_memory_use.load(Ordering::SeqCst) + 4 + val.len() as u64;
-            self.primary_memory_map.insert(key, val);
+            self.primary_memory_map.insert(key, Some(val));
             self.primary_memory_map_memory_use
                 .store(memuse, Ordering::SeqCst);
         } else {
             trace!("Putting key {} into secondary memmap", &key);
             let memuse =
                 self.secondary_memory_map_memory_use.load(Ordering::SeqCst) + 4 + val.len() as u64;
-            self.secondary_memory_map.insert(key, val);
+            self.secondary_memory_map.insert(key, Some(val));
             self.secondary_memory_map_memory_use
                 .store(memuse, Ordering::SeqCst);
         }
-        return Ok(());
     }
 
     fn time_to_merge_primary_memmap(self: &Self) -> bool {
@@ -254,8 +262,8 @@ mod test_run {
     // use test_case::test_case;
     use crate::lsm::Lsm;
     use std::sync::Arc;
+    use std::time::Duration;
     use test_env_log::test;
-    use tokio::time::Duration;
 
     #[test]
     fn lsm_small_one_disk_run() {
@@ -266,7 +274,7 @@ mod test_run {
         config.set_memory_map_budget(1000).unwrap();
         config.set_directory(dir.path());
         let lsm = Lsm::new(Some(config));
-        lsm.put(42, vec![042u8]).unwrap();
+        lsm.put(42, vec![042u8]);
         insert_vals(lsm.clone(), 1500);
         assert_eq!(lsm.get(&42).unwrap(), vec![042u8]);
 
@@ -292,12 +300,12 @@ mod test_run {
         config.set_memory_map_budget(1000).unwrap();
         config.set_directory(dir.path());
         let lsm = Lsm::new(Some(config));
-        lsm.put(42, vec![042u8]).unwrap();
+        lsm.put(42, vec![042u8]);
         for _ in 0..10 {
             insert_vals(lsm.clone(), 1100);
             sleep(Duration::new(3, 0));
         }
-        lsm.put(41, vec![041u8]).unwrap();
+        lsm.put(41, vec![041u8]);
         assert_eq!(lsm.get(&42).unwrap(), vec![042u8]);
         assert_eq!(lsm.get(&41).unwrap(), vec![041u8]);
 
@@ -324,7 +332,7 @@ mod test_run {
             let rand_key: i32 = rng.gen_range(-50000..50000);
             let rand_val = gen_rand_bytes(&mut rng);
             curr_size += 4 + rand_val.len() as u64;
-            map.put(rand_key, rand_val).unwrap();
+            map.put(rand_key, rand_val);
             num_gen_items += 1;
         }
         info!("Generated {} key/value pairs", num_gen_items);

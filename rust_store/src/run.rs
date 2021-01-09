@@ -63,10 +63,11 @@ impl Level {
 #[derive(Serialize, Deserialize)]
 pub struct Item<K: Ord + Copy> {
     key: K,
-    value: Vec<u8>,
+    value: Option<Vec<u8>>,
 }
+
 impl<K: Ord + Copy> Item<K> {
-    pub fn new(key: K, value: Vec<u8>) -> Item<K> {
+    pub fn new(key: K, value: Option<Vec<u8>>) -> Item<K> {
         return Item {
             key: key,
             value: value,
@@ -77,7 +78,7 @@ impl<K: Ord + Copy> Item<K> {
         return self.key;
     }
 
-    pub fn value(self) -> Vec<u8> {
+    pub fn value(self) -> Option<Vec<u8>> {
         return self.value;
     }
 }
@@ -112,7 +113,7 @@ impl Run {
     // this can be refactored to use run_from_iterator once I implement my own Skiplist, or
     // wrap the cross bream skiplist to return Items
     pub fn new_from_skipmap(
-        memory_map: Arc<SkipMap<i32, Vec<u8>>>,
+        memory_map: Arc<SkipMap<i32, Option<Vec<u8>>>>,
         config: &rust_store::Config,
     ) -> Result<Run, RunError> {
         let num_elements = memory_map.len();
@@ -449,7 +450,7 @@ impl Run {
     /// Merge a memory map into an existing level 1 run
     /// without consuming the memory map, since we want to keep reading from it while doing this operation
     pub fn merge_memory_map_into_run(
-        map: Arc<SkipMap<i32, Vec<u8>>>,
+        map: Arc<SkipMap<i32, Option<Vec<u8>>>>,
         run: Arc<Run>,
         config: &rust_store::Config,
     ) -> Result<Run, RunError> {
@@ -557,7 +558,7 @@ impl Run {
                 }
             };
             if item.key == *key {
-                return Ok(Some(item.value));
+                return Ok(item.value);
             }
         }
     }
@@ -724,7 +725,7 @@ mod test_run {
     use test_case::test_case;
     // use test_env_log::test;
     use std::sync::Arc;
-    use tokio::time::Duration;
+    use std::time::Duration;
 
     #[test]
     fn small_run_from_memory_map() {
@@ -749,7 +750,7 @@ mod test_run {
         info!("Running small_run_from_memory_map");
         let map = create_skipmap(1000);
         for i in 0..500 {
-            map.insert(i, vec![0u8, 20u8, 3u8]);
+            map.insert(i, Some(vec![0u8, 20u8, 3u8]));
         }
         let run = Run::new_from_skipmap(map, &config).unwrap();
         let page_index = run.get_page_index(&0).unwrap();
@@ -768,7 +769,7 @@ mod test_run {
         config.set_directory(dir.path());
         let map = create_skipmap(1000);
         for i in 0..250 {
-            map.insert(i, vec![i as u8]);
+            map.insert(i, Some(vec![i as u8]));
         }
         let run = Run::new_from_skipmap(map, &config).unwrap();
         for i in 0..250 {
@@ -787,7 +788,7 @@ mod test_run {
         config.set_directory(dir.path());
         let map = Arc::new(SkipMap::new());
         for i in 0..250 {
-            map.insert(i, vec![i as u8]);
+            map.insert(i, Some(vec![i as u8]));
         }
         let run = Run::new_from_skipmap(map, &config).unwrap();
         let val = run.get_from_run(&42000);
@@ -804,7 +805,7 @@ mod test_run {
         config.set_directory(dir.path());
         let map = Arc::new(SkipMap::new());
         for i in 0..250 {
-            map.insert(i, vec![i as u8]);
+            map.insert(i, Some(vec![i as u8]));
         }
         let run = Run::new_from_skipmap(map, &config).unwrap();
         let val = run.get_from_block(0, &42000);
@@ -821,14 +822,14 @@ mod test_run {
         config.set_directory(dir.path());
         let map = create_skipmap(2000);
         for i in 0..50 {
-            map.insert(i, vec![i as u8]);
+            map.insert(i, Some(vec![i as u8]));
         }
         let run = Arc::new(Run::new_from_skipmap(map, &config).unwrap());
 
         let new_map = Arc::new(SkipMap::new());
 
         for i in 0..50 {
-            new_map.insert(i, vec![(i * 2) as u8]);
+            new_map.insert(i, Some(vec![(i * 2) as u8]));
         }
 
         let new_run =
@@ -868,7 +869,7 @@ mod test_run {
     }
 
     // generates a random number of random bytes
-    fn gen_rand_bytes<T: Rng>(mut rng: &mut T) -> Vec<u8> {
+    fn gen_rand_bytes<T: Rng>(rng: &mut T) -> Vec<u8> {
         let num_bytes = rng.gen_range(1..256);
         let mut ret_vec = vec![0u8; num_bytes];
         rng.fill_bytes(&mut ret_vec);
@@ -876,7 +877,7 @@ mod test_run {
     }
 
     // Size in bytes approx
-    fn create_skipmap(size: u64) -> Arc<SkipMap<i32, Vec<u8>>> {
+    fn create_skipmap(size: u64) -> Arc<SkipMap<i32, Option<Vec<u8>>>> {
         let mut curr_size: u64 = 0;
         let map = Arc::new(SkipMap::new());
         let seed = [42; 32];
@@ -886,7 +887,7 @@ mod test_run {
             let rand_key: i32 = rng.gen_range(-50000..50000);
             let rand_val = gen_rand_bytes(&mut rng);
             curr_size += 4 + rand_val.len() as u64;
-            map.insert(rand_key, rand_val);
+            map.insert(rand_key, Some(rand_val));
         }
         return map;
     }
@@ -901,7 +902,7 @@ mod test_run {
         config.set_directory(dir.path());
         let map = Arc::new(SkipMap::new());
         for i in 0..num_items {
-            map.insert(i, vec![i as u8]);
+            map.insert(i, Some(vec![i as u8]));
         }
         for x in map.clone().iter() {
             println!("{:?} {:?}", x.key(), x.value());
@@ -909,7 +910,7 @@ mod test_run {
         let run = Run::new_from_skipmap(map, &config).unwrap();
         let mut i = 0;
         for key_val in &run {
-            assert_eq!(key_val.value[0], i as u8);
+            assert_eq!(key_val.value.unwrap()[0], i as u8);
             assert_eq!(key_val.key, i);
             i += 1;
         }

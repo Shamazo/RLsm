@@ -178,9 +178,17 @@ impl RustStore {
     //     let get_val = db.get(&42);
     //     // get_val == put_val
     //     ```
-    pub fn put(self: &Self, key: i32, value: Vec<u8>) -> Result<(), RustStoreError> {
-        let res = self.lsm.put(key, value)?;
-        return Ok(res);
+    pub fn put(self: &Self, key: i32, value: Vec<u8>) -> () {
+        self.lsm.put(key, value);
+    }
+
+    /// Delete a value associated with a key
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - Key to delete
+    pub fn delete(self: &Self, key: i32) -> () {
+        self.lsm.delete(key);
     }
 }
 
@@ -188,6 +196,7 @@ impl RustStore {
 mod test_rust_store {
     use crate::{Config, RustStore, RustStoreError};
     use log::info;
+    use rand::prelude::SliceRandom;
     use rand::Rng;
     use rand_chacha::rand_core::SeedableRng;
     use rand_chacha::ChaChaRng;
@@ -211,18 +220,24 @@ mod test_rust_store {
         let mut keys = Vec::new();
         let seed = [42; 32];
         let mut rng = ChaChaRng::from_seed(seed);
-        for _ in 0..num_pairs {
+        for i in 0..num_pairs {
             values.push(gen_rand_bytes(&mut rng));
-            keys.push(rng.gen_range(-10000..10000));
+            keys.push(i as i32);
+        }
+        keys.shuffle(&mut rng);
+
+        for i in 0..num_pairs {
+            db.put(keys[i], values[i].clone());
         }
 
         for i in 0..num_pairs {
-            db.put(keys[i], values[i].clone()).unwrap();
+            let val = db.get(&keys[i]);
+            assert_eq!(val.unwrap(), values[i])
         }
     }
 
     #[test]
-    fn simple_test() {
+    fn test_invalid_block_size() {
         // env_logger::init();
         let mut config = Config::default();
         let res = config.set_block_size(0);
@@ -231,7 +246,7 @@ mod test_rust_store {
 
     // generates a random number of random bytes
     // TODO move these helpers into a utilities mod
-    fn gen_rand_bytes<T: Rng>(mut rng: &mut T) -> Vec<u8> {
+    fn gen_rand_bytes<T: Rng>(rng: &mut T) -> Vec<u8> {
         let num_bytes = rng.gen_range(1..256);
         let mut ret_vec = vec![0u8; num_bytes];
         rng.fill_bytes(&mut ret_vec);

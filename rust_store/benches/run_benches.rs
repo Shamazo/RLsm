@@ -21,7 +21,7 @@ fn gen_rand_bytes<T: Rng>(mut rng: &mut T) -> Vec<u8> {
 }
 
 // Size in bytes approx
-fn create_skipmap(size: u64) -> Arc<SkipMap<i32, Vec<u8>>> {
+fn create_skipmap(size: u64) -> Arc<SkipMap<i32, Option<Vec<u8>>>> {
     let mut curr_size: u64 = 0;
     let map = Arc::new(SkipMap::new());
     let seed = [42; 32];
@@ -31,7 +31,7 @@ fn create_skipmap(size: u64) -> Arc<SkipMap<i32, Vec<u8>>> {
         let rand_key: i32 = rng.gen();
         let rand_val = gen_rand_bytes(&mut rng);
         curr_size += 4 + rand_val.len() as u64;
-        map.insert(rand_key, rand_val);
+        map.insert(rand_key, Some(rand_val));
     }
 
     return map;

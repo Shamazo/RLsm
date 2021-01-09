@@ -12,9 +12,6 @@ path = "src/lib.rs"
 [dependencies]
 simplelog = "^0.7.6"
 log = "0.4"
-tonic = "0.3"
-prost = "0.6"
-tokio = { version = "1.0.1", features = ["full"] }
 anyhow = "1.0"
 thiserror = "1.0"
 rayon = "*"
