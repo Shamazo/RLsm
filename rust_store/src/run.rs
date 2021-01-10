@@ -24,6 +24,8 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
+
+
 #[derive(Error, Debug)]
 pub enum RunError {
     #[error("IO Error")]
@@ -488,13 +490,49 @@ impl Run {
         unimplemented!();
     }
 
-    #[allow(dead_code)]
-    pub fn new_from_merge(left: &Run, right: &Run) -> Result<Run, RunError> {
-        return Err(RunError::NotImplemented);
+
+    pub fn merge_iterators<K, L>(
+        left: &Box<K>,
+        right: Box<L>
+    ) -> impl Iterator<Item = Item<i32>>
+        where
+            K: Iterator<Item = Item<i32>> ,
+            L: Iterator<Item = Item<i32>> ,
+    {
+        left
+            .merge_join_by(right.into_iter(), |i, j| {
+                i.key.cmp(&j.key)
+            })
+            .map(|either| match either {
+                Left(x) => x,
+                Right(x) => x,
+                Both(x, _) => x,
+            })
+
+    }
+
+
+
+    pub fn new_from_merge(runs: Vec<Arc<Run>>, config: &rust_store::Config, level: usize ) -> Result<Run, RunError> {
+        if runs.len() == 1{
+            return Ok(*runs[0]);
+        }
+
+        // higher indexed runs are newer
+        let mut it = Run::runs_to_iterator(runs[runs.len() -1].clone(), runs[runs.len()-2].clone());
+        // approx and overestimated as we may double count
+        let mut num_elements = runs[runs.len() -1].num_elements + runs[runs.len()-2].num_elements;
+        let mut iterators: Vec<Box<dyn Iterator<Item=Item<i32>>>>;
+        for run in runs[0..runs.len()-2].into_iter().rev(){
+
+                let x= Run::merge_iterators(iterators.last().unwrap(), Box::new(run.into_iter()));
+
+            num_elements += run.num_elements;
+        }
+        return Run::run_from_iterator(it, config, level, num_elements);
     }
 
     // Returns value if it exists in the run
-    #[allow(dead_code)]
     pub fn get_from_run(self: &Self, key: &i32) -> Option<Vec<u8>> {
         if !self.bloom_filter.contains(key) {
             debug!("key {:?} not in bloom filter", key);
@@ -654,6 +692,7 @@ pub struct RunIterator {
     block_size: u64,
     deserializer: bincode::DefaultOptions,
 }
+
 
 impl Iterator for RunIterator {
     type Item = Item<i32>;
