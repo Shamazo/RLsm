@@ -181,12 +181,11 @@ impl Run {
                 let padding_byte_len = writer.write(&zeros)? as u64;
 
                 debug!(
-                    "Writing page with {} bytes with {} bytes of padding. with min {:?} max {:?}, seek position {}",
+                    "Writing page with {} bytes with {} bytes of padding. with min {:?} max {:?}",
                     idx,
                     config.block_size - idx,
                     &min_val,
-                    &max_val,
-                    writer.stream_position().unwrap()
+                    &max_val
                 );
                 idx = idx + padding_byte_len;
 
