@@ -161,7 +161,6 @@ impl Run {
         for x in memory_map.iter() {
             encoder.flush()?;
             idx = encoder.total_out();
-            // would prefer to move the value as we consume the memorymap, but to benchmark it I need to pass a reference.
             let item: Item<i32> = Item::new(x.key().clone(), x.value().clone());
             filter.insert(&item.key);
             // we use ser_length because I don't know how to get compressed length
@@ -182,11 +181,12 @@ impl Run {
                 let padding_byte_len = writer.write(&zeros)? as u64;
 
                 debug!(
-                    "Writing page with {} bytes with {} bytes of padding. with min {:?} max {:?}",
+                    "Writing page with {} bytes with {} bytes of padding. with min {:?} max {:?}, seek position {}",
                     idx,
                     config.block_size - idx,
                     &min_val,
-                    &max_val
+                    &max_val,
+                    writer.stream_position().unwrap()
                 );
                 idx = idx + padding_byte_len;
 
@@ -196,6 +196,7 @@ impl Run {
                 }
                 // open up a new encoder for the next page
                 writer.flush()?;
+
                 encoder = DeflateEncoder::new(writer, Compression::default());
                 idx = 0;
                 fence_pointers.push(FencePointer::new(min_val, max_val));
@@ -466,11 +467,11 @@ impl Run {
                 Right(x) => x,
                 Both(x, _) => Item::new(x.key().clone(), x.value().clone()),
             });
-
+        info!("Constructed iterator");
         // TODO figure out how to get a better estimate of elements
         // Since this implemented as an iterator, we would need to consume it to get the count,
         // which defeats the point of having an iterator.
-        let num_elements = map.len();
+        let num_elements = map.len() + run.num_elements;
         return Run::run_from_iterator(it, config, 1, num_elements);
     }
 
@@ -529,7 +530,8 @@ impl Run {
         let mut f = File::open(&self.file_name)?;
         let _ = f.seek(SeekFrom::Start(page * self.block_size))?;
         let mut page_buf = vec![0u8; self.block_size as usize];
-        let _ = f.read(&mut page_buf)?;
+        let num_bytes_read = f.read(&mut page_buf)?;
+        trace!("Read {} bytes off disk for page {}", num_bytes_read, page);
 
         let bincode_opts = bincode::DefaultOptions::new();
         bincode_opts.allow_trailing_bytes();
@@ -538,9 +540,10 @@ impl Run {
 
         let mut decompressed: Vec<u8> = Vec::new();
         let decompressed_size = deflater.read_to_end(&mut decompressed)?;
-        debug!(
-            "Decompressed page {} into {} bytes",
-            page, decompressed_size
+        trace!(
+            "Decompressed page {} from {} bytes",
+            page,
+            decompressed_size
         );
         let mut decompressed_cursor = Cursor::new(decompressed);
 
@@ -818,10 +821,10 @@ mod test_run {
     #[test_case( 50, 5000; "small map into large run")]
     // TODO neither of these large map tests cases appears to actually run in a reasonable amount of time
     // need to profile what is going on .
-    // #[test_case( 5000, 50; "lerge map into small run")]
-    // #[test_case( 5000, 50000; "large map into large run")]
+    #[test_case( 5000, 50; "large map into small run")]
+    #[test_case( 5000, 50000; "large map into large run")]
     fn merge_memorymap_into_run(memmap_size: i32, run_size: i32) {
-        // env_logger::init();
+        env_logger::try_init();
         info!("Running small_run_get");
         let mut config = Config::default();
         let dir = tempdir().unwrap();
@@ -852,7 +855,7 @@ mod test_run {
 
         let new_run =
             Arc::new(Run::merge_memory_map_into_run(new_map, run.clone(), &config).unwrap());
-        for i in 0..new_keys.len() {
+        for i in (0..new_keys.len()).step_by(5) {
             let val = new_run.get_from_run(&new_keys[i]).unwrap();
             assert!(&val == new_vals[i].as_ref().unwrap());
         }
@@ -874,7 +877,7 @@ mod test_run {
     #[test_case(65536 ; "16 KB")]
     #[test_case(131072 ; "32 KB")]
     fn construct_1MB_run_varying_block_size(block_size: u64) {
-        // env_logger::init();
+        // env_logger::try_init();
         info!("Running construct_large_run_random_vals");
         let mut config = Config::default();
         config.set_block_size(block_size).unwrap();

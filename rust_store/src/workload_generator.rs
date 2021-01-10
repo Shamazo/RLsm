@@ -44,9 +44,9 @@ impl Distribution<RequestType> for Standard {
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct Request {
-    key: i32,
-    value: Option<Vec<u8>>,
-    request_type: RequestType,
+    pub key: i32,
+    pub value: Option<Vec<u8>>,
+    pub request_type: RequestType,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -77,7 +77,7 @@ impl WorkloadParameters {
     ) -> Result<WorkloadParameters, WorkloadGeneratorError> {
         if num_puts == 0 && (num_gets > 0 || num_deletes > 0) {
             return Err(WorkloadGeneratorError::InvalidParameter(
-                "Must have > 0 gets".parse().unwrap(),
+                "Must have > 0 puts".parse().unwrap(),
             ));
         }
 
@@ -340,7 +340,6 @@ mod test_run {
     #[test_case( 1000, 1000, 50, 0.2, 0.0;  "1000 puts, 10 gets, 50 deletes, 0.2 gets skew, 0.0 gets miss rate")]
     #[test_case( 1000, 1000, 50, 0.0, 0.2;  "1000 puts, 10 gets, 50 deletes, 0.0 gets skew, 0.2 gets miss rate")]
     #[test_case( 1000, 1000, 50, 0.2, 0.2;  "1000 puts, 10 gets, 50 deletes, 0.2 gets skew, 0.2 gets miss rate")]
-
     fn test_workload_generate_iter(
         num_puts: u32,
         num_gets: u32,

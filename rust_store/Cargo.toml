@@ -42,18 +42,18 @@ test-case = { git = "https://github.com/frondeus/test-case" }
 
 
 
-[[bench]]
-name = "bloom_filter_benches"
-harness = false
-
-[[bench]]
-name = "memory_map_benches"
-harness = false
-
-[[bench]]
-name = "run_benches"
-harness = false
-
 #[[bench]]
-#name = "rust_store_benches"
+#name = "bloom_filter_benches"
 #harness = false
+#
+#[[bench]]
+#name = "memory_map_benches"
+#harness = false
+#
+#[[bench]]
+#name = "run_benches"
+#harness = false
+
+[[bench]]
+name = "rust_store_benches"
+harness = false
