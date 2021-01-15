@@ -431,15 +431,12 @@ impl Run {
     }
 
     /// Given two runs, return an iterator over their merged items
-    /// If keys exist in both left and right, then the key is disgarded from the righ iterator
+    /// If keys exist in both left and right, then the key is disgarded from the right iterator
     /// i.e left MUST be the newer run and right must be the older run.
     pub fn runs_to_iterator(left: Arc<Run>, right: Arc<Run>) -> impl Iterator<Item = Item<i32>> {
         return left
             .into_iter()
-            .merge_join_by(right.into_iter(), |i, j| {
-                let jkey = j.key;
-                i.key.cmp(&jkey)
-            })
+            .merge_join_by(right.into_iter(), |i, j| i.key.cmp(&j.key))
             .map(|either| match either {
                 Left(x) => x,
                 Right(x) => x,
@@ -488,13 +485,70 @@ impl Run {
         unimplemented!();
     }
 
-    #[allow(dead_code)]
-    pub fn new_from_merge(left: &Run, right: &Run) -> Result<Run, RunError> {
-        return Err(RunError::NotImplemented);
+    // pub fn merge_iterators<K, L>(
+    //     left: &Box<K>,
+    //     right: Box<L>
+    // ) -> impl Iterator<Item = Item<i32>>
+    //     where
+    //         K: Iterator<Item = Item<i32>> ,
+    //         L: Iterator<Item = Item<i32>> ,
+    // {
+    //
+    //
+    // }
+
+    pub fn new_from_merge(
+        runs: &Vec<Arc<Run>>,
+        config: &rust_store::Config,
+        level: usize,
+    ) -> Result<Run, RunError> {
+        info!(
+            "Merging {} runs into a new level {} run",
+            runs.len(),
+            &level
+        );
+        // right now dealing with returning the run and changing the level is a pain
+        // The caller should check that there are > 1 runs
+        debug_assert!(runs.len() > 1);
+        // if runs.len() == 1 {
+        //     let mut ret_run = (*runs[0]).clone();
+        //     ret_run.level = level;
+        //
+        //     return Ok(ret_run);
+        // }
+
+        // higher indexed runs are newer
+        // let it =
+
+        // approx and overestimated as we may double count
+        let mut num_elements =
+            runs[runs.len() - 1].num_elements + runs[runs.len() - 2].num_elements;
+
+        let mut iterators: Vec<Box<dyn Iterator<Item = Item<i32>>>> = vec![Box::new(
+            Run::runs_to_iterator(runs[runs.len() - 1].clone(), runs[runs.len() - 2].clone()),
+        )];
+        for run in runs[0..runs.len() - 3].into_iter().rev() {
+            let next_iter = Box::new(
+                iterators
+                    .pop()
+                    .unwrap()
+                    .merge_join_by(run.into_iter(), |i, j| i.key.cmp(&j.key))
+                    .map(|either| match either {
+                        Left(x) => x,
+                        Right(x) => x,
+                        Both(x, _) => x,
+                    }),
+            );
+            iterators.push(next_iter);
+
+            // let x= Run::merge_iterators(iterators.last().unwrap(), Box::new(run.into_iter()));
+
+            num_elements += run.num_elements;
+        }
+        return Run::run_from_iterator(iterators.pop().unwrap(), config, level, num_elements);
     }
 
     // Returns value if it exists in the run
-    #[allow(dead_code)]
     pub fn get_from_run(self: &Self, key: &i32) -> Option<Vec<u8>> {
         if !self.bloom_filter.contains(key) {
             debug!("key {:?} not in bloom filter", key);
@@ -508,20 +562,19 @@ impl Run {
         }
 
         let maybe_val = self.get_from_block(page_idx.unwrap(), key);
-        return maybe_val.unwrap();
-        // return match maybe_val {
-        //     Ok(None) => None,
-        //     Ok(Some(val)) => Some(val),
-        //     Err(RunError::DeserializeError(_)) => {
-        //         // need to figure out handling of deserializing a page and what happens when we run out of data.
-        //         warn!("Failed to get val from run Deserialize error");
-        //         None
-        //     }
-        //     Err(E) => {
-        //         warn!("Failed to get val from run {}", E);
-        //         None
-        //     }
-        // };
+        return match maybe_val {
+            Ok(None) => None,
+            Ok(Some(val)) => Some(val),
+            Err(RunError::DeserializeError(_)) => {
+                // need to figure out handling of deserializing a page and what happens when we run out of data.
+                warn!("Failed to get val from run Deserialize error");
+                None
+            }
+            Err(E) => {
+                warn!("Failed to get val from run {}", E);
+                None
+            }
+        };
     }
 
     fn get_from_block(self: &Self, page: u64, key: &i32) -> Result<Option<Vec<u8>>, RunError> {
@@ -672,40 +725,63 @@ impl Iterator for RunIterator {
             .deserializer
             .deserialize_from(&mut self.decompressed_block_cursor);
 
+        // First error is expected, we are out of stuff to deserialize,
+        // a second error is a legitimate error.
         if item_res.is_err() {
-            // First error is expected, we are out of stuff to deserialize,
-            // a second error is a legitimate error.
-
-            debug!("Error derializing page in run iterator, attempting to read next page");
-            let mut block_buf = vec![0u8; self.block_size as usize];
-            let reader = self.reader.as_mut();
-            let num_read_bytes = reader.unwrap().read(&mut block_buf);
-            trace!(
-                "Read {:?} bytes on next block of RunIterator",
-                num_read_bytes
-            );
-
-            let mut deflater = DeflateDecoder::new(Cursor::new(block_buf));
-            let mut decompressed: Vec<u8> = Vec::new();
-            if decompressed.len() == 0 {
-                return None;
-            }
-
-            let _ = deflater.read_to_end(&mut decompressed).unwrap();
-            let decompressed_cursor = Cursor::new(decompressed);
-            self.decompressed_block_cursor = decompressed_cursor;
-
-            let maybe_item = self
-                .deserializer
-                .deserialize_from(&mut self.decompressed_block_cursor);
-            match maybe_item {
+            return match item_res {
                 Ok(x) => Some(x),
                 Err(e) => {
-                    error!("Got error {} on first read of page", e);
-                    self.error = Some(RunError::DeserializeError(e));
-                    None
+                    return match *e {
+                        ErrorKind::Io(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                            info!("EOF on block in run iterator, opening next block");
+                            let mut block_buf = vec![0u8; self.block_size as usize];
+                            let reader = self.reader.as_mut();
+                            let num_read_bytes = reader.unwrap().read(&mut block_buf);
+                            trace!(
+                                "Read {:?} bytes on next block of RunIterator",
+                                num_read_bytes
+                            );
+
+                            let mut deflater = DeflateDecoder::new(Cursor::new(block_buf));
+                            let mut decompressed: Vec<u8> = Vec::new();
+                            let deflate_res = deflater.read_to_end(&mut decompressed);
+
+                            match deflate_res {
+                                Ok(num_bytes) => {
+                                    trace!("run iter new block read {} bytes", num_bytes);
+                                }
+                                Err(e) => {
+                                    info!("Got error {} on first read of page. (expected for the last page)", e);
+                                    self.error = Some(RunError::IoError(e));
+                                    return None;
+                                }
+                            }
+
+                            let decompressed_cursor = Cursor::new(decompressed);
+                            self.decompressed_block_cursor = decompressed_cursor;
+
+                            let maybe_item = self
+                                .deserializer
+                                .deserialize_from(&mut self.decompressed_block_cursor);
+                            match maybe_item {
+                                Ok(x) => {
+                                    trace!("Got first item from new block");
+                                    Some(x)
+                                }
+                                Err(e) => {
+                                    error!("Got error {} on first read of page", e);
+                                    self.error = Some(RunError::DeserializeError(e));
+                                    None
+                                }
+                            }
+                        }
+                        _ => {
+                            error!("Error in run iterator: {}", e);
+                            None
+                        }
+                    }
                 }
-            }
+            };
         } else {
             let item = item_res.unwrap();
             return Some(item);
@@ -732,12 +808,15 @@ mod test_run {
 
     #[test]
     fn small_run_from_memory_map() {
-        // env_logger::init();
+        let _ = env_logger::try_init();
         let mut config = Config::default();
         let dir = tempdir().unwrap();
         config.set_directory(dir.path());
+        let seed = [42; 32];
+        let mut rng = ChaChaRng::from_seed(seed);
+
         info!("Running small_run_from_memory_map");
-        let map = create_skipmap(1000);
+        let map = create_skipmap(1000, &mut rng);
         let run = Run::new_from_skipmap(map, &config).unwrap();
         info!("Num pages {}", run.num_blocks);
         run.delete().unwrap();
@@ -745,13 +824,16 @@ mod test_run {
 
     #[test]
     fn small_run_get_page_index() {
-        // env_logger::init();
+        let _ = env_logger::try_init();
         sleep(Duration::new(0, 2000000));
         let mut config = Config::default();
         let dir = tempdir().unwrap();
         config.set_directory(dir.path());
+        let seed = [42; 32];
+        let mut rng = ChaChaRng::from_seed(seed);
+
         info!("Running small_run_from_memory_map");
-        let map = create_skipmap(1000);
+        let map = create_skipmap(1000, &mut rng);
         for i in 0..500 {
             map.insert(i, Some(vec![0u8, 20u8, 3u8]));
         }
@@ -765,12 +847,15 @@ mod test_run {
 
     #[test]
     fn small_run_get() {
-        // env_logger::init();
+        let _ = env_logger::try_init();
         info!("Running small_run_get");
         let mut config = Config::default();
         let dir = tempdir().unwrap();
         config.set_directory(dir.path());
-        let map = create_skipmap(1000);
+        let seed = [42; 32];
+        let mut rng = ChaChaRng::from_seed(seed);
+
+        let map = create_skipmap(1000, &mut rng);
         for i in 0..250 {
             map.insert(i, Some(vec![i as u8]));
         }
@@ -784,7 +869,7 @@ mod test_run {
 
     #[test]
     fn small_run_get_no_result() {
-        // env_logger::init();
+        let _ = env_logger::try_init();
         info!("Running small_run_get");
         let mut config = Config::default();
         let dir = tempdir().unwrap();
@@ -801,7 +886,7 @@ mod test_run {
 
     #[test]
     fn run_get_from_block() {
-        // env_logger::init();
+        let _ = env_logger::try_init();
         info!("Running small_run_get");
         let mut config = Config::default();
         let dir = tempdir().unwrap();
@@ -813,22 +898,30 @@ mod test_run {
         let run = Run::new_from_skipmap(map, &config).unwrap();
         let val = run.get_from_block(0, &42000);
         assert_eq!(val.unwrap(), None);
+
+        for i in 0..250 {
+            let page_index = run.get_page_index(&i).unwrap();
+            let val = run.get_from_block(page_index, &i);
+            assert_eq!(val.unwrap(), Some(vec![i as u8]));
+        }
+
         run.delete().unwrap();
     }
 
     #[test_case( 50, 50; "small map into small run")]
     #[test_case( 50, 5000; "small map into large run")]
-    // TODO neither of these large map tests cases appears to actually run in a reasonable amount of time
-    // need to profile what is going on .
     #[test_case( 5000, 50; "large map into small run")]
     #[test_case( 5000, 50000; "large map into large run")]
     fn merge_memorymap_into_run(memmap_size: i32, run_size: i32) {
-        env_logger::try_init();
+        let _ = env_logger::try_init();
         info!("Running small_run_get");
         let mut config = Config::default();
         let dir = tempdir().unwrap();
         config.set_directory(dir.path());
-        let map = create_skipmap(2000);
+        let seed = [42; 32];
+        let mut rng = ChaChaRng::from_seed(seed);
+
+        let map = create_skipmap(2000, &mut rng);
         for i in 0..run_size {
             map.insert(i, Some(vec![i as u8]));
         }
@@ -876,13 +969,16 @@ mod test_run {
     #[test_case(65536 ; "16 KB")]
     #[test_case(131072 ; "32 KB")]
     fn construct_1MB_run_varying_block_size(block_size: u64) {
-        // env_logger::try_init();
+        let _ = env_logger::try_init();
         info!("Running construct_large_run_random_vals");
         let mut config = Config::default();
         config.set_block_size(block_size).unwrap();
         let dir = tempdir().unwrap();
         config.set_directory(dir.path());
-        let map = create_skipmap(4 * 1024 * 1024);
+        let seed = [42; 32];
+        let mut rng = ChaChaRng::from_seed(seed);
+
+        let map = create_skipmap(4 * 1024 * 1024, &mut rng);
         let run = Run::new_from_skipmap(map, &config).unwrap();
 
         run.delete().unwrap();
@@ -890,18 +986,16 @@ mod test_run {
 
     // generates a random number of random bytes
     fn gen_rand_bytes<T: Rng>(rng: &mut T) -> Vec<u8> {
-        let num_bytes = rng.gen_range(1..256);
+        let num_bytes = rng.gen_range(8..32);
         let mut ret_vec = vec![0u8; num_bytes];
         rng.fill_bytes(&mut ret_vec);
         return ret_vec;
     }
 
     // Size in bytes approx
-    fn create_skipmap(size: u64) -> Arc<SkipMap<i32, Option<Vec<u8>>>> {
+    fn create_skipmap<T: Rng>(size: u64, mut rng: &mut T) -> Arc<SkipMap<i32, Option<Vec<u8>>>> {
         let mut curr_size: u64 = 0;
         let map = Arc::new(SkipMap::new());
-        let seed = [42; 32];
-        let mut rng = ChaChaRng::from_seed(seed);
 
         while curr_size < size {
             let rand_key: i32 = rng.gen_range(-50000..50000);
@@ -914,8 +1008,9 @@ mod test_run {
 
     #[test_case( 5 ; "one block")]
     #[test_case(3000 ; "several blocks")]
+    #[test_case(10000 ; "many blocks")]
     fn test_run_iter(num_items: i32) {
-        // env_logger::init();
+        let _ = env_logger::try_init();
         info!("Running small_run_get");
         let mut config = Config::default();
         let dir = tempdir().unwrap();
@@ -935,5 +1030,93 @@ mod test_run {
             i += 1;
         }
         run.delete().unwrap();
+    }
+
+    #[test_case( 3, 5 ; "left 3 elements, right 5 elements")]
+    #[test_case( 500, 700 ; "left 500 elements, right 700 elements")]
+    #[test_case( 5000, 4000 ; "left 5000 elements, right 4000 elements")]
+    fn test_runs_to_iter_disjoint(left_size: i32, right_size: i32) {
+        let _ = env_logger::try_init();
+        let mut config = Config::default();
+        let dir = tempdir().unwrap();
+        config.set_directory(dir.path());
+
+        let left_map = Arc::new(SkipMap::new());
+        let right_map = Arc::new(SkipMap::new());
+
+        for i in 0..left_size {
+            left_map.insert(i, Some(vec![(i % 255) as u8]));
+        }
+        for i in left_size..(left_size + right_size) {
+            right_map.insert(i, Some(vec![(i % 255) as u8]));
+        }
+
+        let left_run = Arc::new(Run::new_from_skipmap(left_map, &config).unwrap());
+        let right_run = Arc::new(Run::new_from_skipmap(right_map, &config).unwrap());
+
+        let merge_iter = Run::runs_to_iterator(left_run, right_run);
+
+        let mut merge_iter_size = 0;
+        let mut prev_key = -1;
+        for item in merge_iter {
+            merge_iter_size += 1;
+            let this_key = item.key;
+            assert!(
+                &this_key > &prev_key,
+                "this_key {} > prev_key {}",
+                this_key,
+                prev_key
+            );
+            prev_key = this_key;
+        }
+
+        assert_eq!(
+            merge_iter_size,
+            left_size + right_size,
+            "merge iter size {} should equal left_size {} + right size {} = {}",
+            merge_iter_size,
+            left_size,
+            right_size,
+            left_size + right_size
+        );
+    }
+
+    #[test_case( 3, 5 ; "3 5 runs")]
+    #[test_case( 10, 100 ; "10 100 runs")]
+    #[test_case(10, 1000 ; "10 1000 runs")]
+    #[test_case(10, 1000000 ; "10 1 mil runs")]
+    fn test_new_from_merge(num_runs: i32, map_size: u64) {
+        let _ = env_logger::try_init();
+        let mut config = Config::default();
+        let dir = tempdir().unwrap();
+        config.set_directory(dir.path());
+        let seed = [42; 32];
+        let mut rng = ChaChaRng::from_seed(seed);
+
+        let mut runs = Vec::new();
+        let mut total_num_pre_merge = 0;
+        for i in 0..num_runs {
+            let map = create_skipmap(map_size, &mut rng);
+            map.insert(42, Some(vec![i as u8]));
+            runs.push(Arc::new(Run::new_from_skipmap(map, &config).unwrap()));
+            for item in runs.last().clone().into_iter() {
+                total_num_pre_merge += 1;
+            }
+        }
+
+        let merged_run = Run::new_from_merge(&runs, &config, 2).unwrap();
+        let mut num_els = 0;
+        for i in merged_run.into_iter() {
+            num_els += 1;
+        }
+        info!("Merged run has {} elements", num_els);
+        info!(
+            "pre merge num iters run has {} elements",
+            total_num_pre_merge
+        );
+        assert_eq!(
+            merged_run.get_from_run(&42).unwrap(),
+            vec![(num_runs - 1) as u8; 1]
+        );
     }
 }
