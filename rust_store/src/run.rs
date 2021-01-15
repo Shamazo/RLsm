@@ -485,18 +485,6 @@ impl Run {
         unimplemented!();
     }
 
-    // pub fn merge_iterators<K, L>(
-    //     left: &Box<K>,
-    //     right: Box<L>
-    // ) -> impl Iterator<Item = Item<i32>>
-    //     where
-    //         K: Iterator<Item = Item<i32>> ,
-    //         L: Iterator<Item = Item<i32>> ,
-    // {
-    //
-    //
-    // }
-
     pub fn new_from_merge(
         runs: &Vec<Arc<Run>>,
         config: &rust_store::Config,
@@ -510,16 +498,6 @@ impl Run {
         // right now dealing with returning the run and changing the level is a pain
         // The caller should check that there are > 1 runs
         debug_assert!(runs.len() > 1);
-        // if runs.len() == 1 {
-        //     let mut ret_run = (*runs[0]).clone();
-        //     ret_run.level = level;
-        //
-        //     return Ok(ret_run);
-        // }
-
-        // higher indexed runs are newer
-        // let it =
-
         // approx and overestimated as we may double count
         let mut num_elements =
             runs[runs.len() - 1].num_elements + runs[runs.len() - 2].num_elements;
@@ -540,9 +518,6 @@ impl Run {
                     }),
             );
             iterators.push(next_iter);
-
-            // let x= Run::merge_iterators(iterators.last().unwrap(), Box::new(run.into_iter()));
-
             num_elements += run.num_elements;
         }
         return Run::run_from_iterator(iterators.pop().unwrap(), config, level, num_elements);
