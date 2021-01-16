@@ -545,8 +545,8 @@ impl Run {
                 warn!("Failed to get val from run Deserialize error");
                 None
             }
-            Err(E) => {
-                warn!("Failed to get val from run {}", E);
+            Err(e) => {
+                warn!("Failed to get val from run {}", e);
                 None
             }
         };
@@ -1029,7 +1029,7 @@ mod test_run {
         let left_run = Arc::new(Run::new_from_skipmap(left_map, &config).unwrap());
         let right_run = Arc::new(Run::new_from_skipmap(right_map, &config).unwrap());
 
-        let merge_iter = Run::runs_to_iterator(left_run, right_run);
+        let merge_iter = Run::runs_to_iterator(left_run.clone(), right_run.clone());
 
         let mut merge_iter_size = 0;
         let mut prev_key = -1;
@@ -1054,6 +1054,9 @@ mod test_run {
             right_size,
             left_size + right_size
         );
+
+        Arc::try_unwrap(left_run).ok().unwrap().delete().unwrap();
+        Arc::try_unwrap(right_run).ok().unwrap().delete().unwrap();
     }
 
     #[test_case( 3, 5 ; "3 5 runs")]

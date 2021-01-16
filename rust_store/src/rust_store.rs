@@ -187,7 +187,7 @@ impl RustStore {
     /// # Arguments
     ///
     /// * `key` - Key to delete
-    pub fn delete(self: &Self, key: i32) -> () {
+    pub fn delete(self: &Self, key: &i32) -> () {
         self.lsm.delete(key);
     }
 }

@@ -74,6 +74,7 @@ impl Lsm {
         });
 
         let manager_lsm = lsm.clone();
+        info!("Spawning manager thread");
         thread::spawn(move || manager_lsm.run_manager());
 
         return lsm;
@@ -131,11 +132,11 @@ impl Lsm {
     }
 
     // Internally Values are stored as Option<Vec<u8>> and None is reserved to mean key deleted
-    pub fn delete(self: &Self, key: i32) -> () {
+    pub fn delete(self: &Self, key: &i32) -> () {
         if self.use_primary_map.load(Ordering::SeqCst) {
-            self.primary_memory_map.insert(key, None);
+            self.primary_memory_map.insert(key.clone(), None);
         } else {
-            self.secondary_memory_map.insert(key, None);
+            self.secondary_memory_map.insert(key.clone(), None);
         }
     }
 
@@ -207,7 +208,9 @@ impl Lsm {
     pub fn run_manager(self: &Self) {
         info!("Starting up run_manager");
         loop {
-            info!("Run manager loop");
+            if self.time_to_shutdown.load(Ordering::Relaxed) {
+                return;
+            }
             std::thread::sleep(Duration::new(1, 0));
             if self.time_to_shutdown.load(Ordering::Relaxed) {
                 info!("run_manager shutting down");
@@ -244,6 +247,13 @@ impl Lsm {
                 }
             }
         }
+    }
+}
+
+impl Drop for Lsm {
+    fn drop(&mut self) {
+        info!("Shutting down run manager");
+        self.time_to_shutdown.store(true, Ordering::Relaxed);
     }
 }
 
@@ -290,6 +300,27 @@ mod test_run {
             num_files = num_files + 1;
         }
         assert_eq!(num_files, 1);
+    }
+
+    #[test]
+    fn test_lsm_delete() {
+        env_logger::try_init();
+        info!("Running small_lsm");
+        let mut config = Config::default();
+        let dir = tempdir().unwrap();
+        config.set_memory_map_budget(1000).unwrap();
+        config.set_directory(dir.path());
+        let lsm = Lsm::new(Some(config));
+        lsm.put(42, vec![042u8]);
+        insert_vals(lsm.clone(), 1500);
+        assert_eq!(lsm.get(&42).unwrap(), vec![042u8]);
+        for i in 0..10 {
+            insert_vals(lsm.clone(), 1100);
+            sleep(Duration::new(3, 0));
+        }
+        lsm.delete(&42);
+
+        assert_eq!(lsm.get(&42), None)
     }
 
     #[test]
