@@ -7,6 +7,7 @@ use crossbeam_skiplist::SkipMap;
 use log::{debug, error, info, trace, warn};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use std::borrow::BorrowMut;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -244,6 +245,32 @@ impl Lsm {
                     self.add_run_to_level(new_run.unwrap(), 1);
                     self.secondary_memory_map_memory_use
                         .store(0, Ordering::SeqCst);
+                }
+            }
+
+            for i in 0..self.levels.read().len() {
+                if self.levels.read()[i].read().runs.len() >= self.config.t as usize {
+                    info!("Compacting runs at level {}", i);
+                    let new_run = Run::new_from_merge(
+                        &self.levels.read()[i].read().runs,
+                        &self.config,
+                        i + 1,
+                    )
+                    .unwrap();
+                    let old_runs = self.levels.read()[i].read().runs.clone();
+                    {
+                        let levels = self.levels.read();
+                        let mut this_level = levels[i].write();
+                        this_level.num_runs = 0;
+                        this_level.runs.clear();
+                        let mut next_level = levels[i + 1].write();
+                        next_level.runs.push(Arc::new(new_run));
+                        next_level.num_runs += 1;
+                    }
+                    for run in old_runs {
+                        info!("Cleaning up runs after merging");
+                        Arc::try_unwrap(run).ok().unwrap().delete().unwrap();
+                    }
                 }
             }
         }

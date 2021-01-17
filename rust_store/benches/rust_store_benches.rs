@@ -21,17 +21,18 @@ fn single_threaded_runner(store: RustStore, workload: WorkloadParameters) {
                 store.put(op.key, op.value.unwrap());
             }
             RequestType::Delete => {
-                store.delete(op.key);
+                store.delete(&op.key);
             }
         }
     }
 }
 
 fn bench_single_threaded_puts(c: &mut Criterion) {
+    env_logger::try_init();
     let mut group = c.benchmark_group("Single threaded inserts)");
     // group.measurement_time(Duration::new(100, 0));
     group.sample_size(10);
-    for n in [1, 10, 100, 1000, 10000].iter() {
+    for n in [10000, 100000, 10000000, 100000000].iter() {
         group.bench_with_input(BenchmarkId::from_parameter(n), n, |b, &n| {
             b.iter_batched(
                 || {
